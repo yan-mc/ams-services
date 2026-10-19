@@ -37,6 +37,7 @@ from .errors import register_exception_handlers
 from .jobs.events import EventBus
 from .jobs.runner import RunnerRegistry, build_default_registry
 from .jobs.service import JobService
+from .runners import register_backend_runners
 from .logging_setup import setup_logging
 from .security import load_or_create_token
 from .voices.pth_parser import MetadataParser, build_parser
@@ -68,6 +69,9 @@ def create_app(
     db = Database(settings.db_path)
     bus = EventBus()
     resolved_registry = registry or build_default_registry()
+    if registry is None:
+        # 默认 registry：内置 mock（ping/mock.long）+ 三个真实后端
+        register_backend_runners(resolved_registry)
     service = JobService(db=db, bus=bus, registry=resolved_registry, settings=settings)
     resolved_parser = voice_parser or build_parser(settings.rvc_python)
 

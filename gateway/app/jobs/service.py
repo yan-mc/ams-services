@@ -303,7 +303,17 @@ class JobService:
             logger.info("任务已取消：%s", job_id)
         except Exception as exc:  # noqa: BLE001 - 任务级错误统一收口
             detail = traceback.format_exc(limit=8)
-            error = {"code": "RUNNER_ERROR", "message": str(exc), "detail": detail}
+            # 后端 Runner 可抛 RunnerError(code/message/detail/hint)，原样写入 Job.error 便于前端/Agent 排障
+            error = {
+                "code": getattr(exc, "code", "RUNNER_ERROR"),
+                "message": getattr(exc, "message", str(exc)),
+                "detail": getattr(exc, "detail", None)
+                if getattr(exc, "detail", None) is not None
+                else detail,
+            }
+            hint = getattr(exc, "hint", None)
+            if hint:
+                error["hint"] = hint
             finished = self.db.update_job(
                 job_id,
                 status="failed",

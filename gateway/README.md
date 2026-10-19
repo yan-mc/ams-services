@@ -40,8 +40,9 @@ gateway/
 │  ├─ logging_setup.py       # 控制台 + 滚动文件日志
 │  ├─ api/                   # health.py / jobs.py / voices.py
 │  ├─ jobs/                  # events.py（SSE 总线）、runner.py（Runner 注册/mock）、service.py（引擎）
+│  ├─ runners/               # 真实后端 Runner：msvc/rvc/pymss + scripts/（外部解释器脚本）+ registry.py
 │  └─ voices/                # scanner.py（只读扫描）、pth_parser.py（可替换解析器）
-├─ tests/                    # pytest（22 个用例）
+├─ tests/                    # pytest（37 passed / 1 skipped；含 fake backend 与真实 smoke 开关）
 ├─ scripts/smoke.ps1         # 真实服务冒烟脚本（启动->health->ping->SSE->停止）
 ├─ .venv/                    # 本目录内独立虚拟环境（gitignore）
 └─ .ams_home_dev/            # 未设置 AMS_HOME 时的开发默认数据目录（gitignore）
@@ -110,6 +111,9 @@ py -3.12 -m venv .venv
 |---|---|---|
 | `ping` | 否 | 快速任务；产出 `ping-result.json` |
 | `mock.long` | 是 | `{"seconds": 8}`（0.2–300）；子进程 sleep，用于验证进度/取消/GPU 串行 |
+| `convert.msvc` | 否 | MSVC→RVC v2 pth；参数 `input_path/out_dir/[name]/[reference_pth]/[no_cache]`；产物 `.pth` + `conversion.json`（见 §9） |
+| `convert.rvc` | 是 | RVC 换声；参数 `input_path/voice_name/[f0_up_key]/[index_rate]/[device]`；产物 wav + meta json |
+| `separate.pymss` | 是 | pymss 分离；参数 `input_path/model/[device]/[chunk]`；产物每 stem wav + `separation-manifest.json` |
 
 **SSE 示例事件**：
 
@@ -185,7 +189,11 @@ Invoke-RestMethod "$base/jobs/$($job.id)" -Headers $headers
 | `AMS_GATEWAY_LOG_LEVEL` | `INFO` | DEBUG/INFO/WARNING/ERROR |
 | `AMS_GATEWAY_EVENT_RING` | `500` | 每任务保留事件数（日志环，超出删最旧） |
 | `AMS_GATEWAY_SHUTDOWN_GRACE` | `2.0` | 关闭宽限秒数 |
-| `AMS_RVC_PYTHON` | 空 | RVC runtime 的 python.exe；配置后 `/voices/scan` 用其子进程解析 pth 元数据 |
+| `AMS_RVC_PYTHON` | 空 | RVC runtime 的 python.exe；`/voices/scan` 解析 pth + `convert.msvc/convert.rvc` 必需 |
+| `AMS_RVC_ROOT` | 空 | RVC 整合包根目录（`assets/weights`、`assets/hubert`、ffmpeg）；`convert.rvc` 必需 |
+| `AMS_PYMSS_PYTHON` | 空 | pymss 独立 venv 的 python.exe；`separate.pymss` 必需 |
+| `AMS_PYMSS_ROOT` | 空 | pymss 环境根目录（模型目录 = `<root>/models`）；`separate.pymss` 必需 |
+| `AMS_MSVC_TOOL` | 空 | `ams-tools/msvc2pth/msvc2pth.py` 路径；`convert.msvc` 必需 |
 
 ---
 
@@ -208,7 +216,7 @@ pth 解析器：`app/voices/pth_parser.py` 中 `build_parser()`——配置了 `
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
-# 22 passed
+# 37 passed, 1 skipped（真实后端 smoke 默认 skip）
 ```
 
 覆盖：
@@ -219,6 +227,7 @@ pth 解析器：`app/voices/pth_parser.py` 中 `build_parser()`——配置了 `
 | `tests/test_jobs.py` | 创建/查询/列表/未知类型/非法参数/取消运行中任务/取消幂等/GPU 串行/重启后历史可查 |
 | `tests/test_sse.py` | 终态任务历史回放、取消事件、404 |
 | `tests/test_voices.py` | 命名规则、缺文件/不同名/小体积、解析器注入、pending_parse、只读性、API 扫描 |
+| `tests/test_runners.py` | 三个 Runner：成功/失败/取消(杀进程树)/未配置/路径不存在/参数校验；App 注册与端到端 Job（fake backend） |
 
 真实服务冒烟（会启动 uvicorn、写 `.ams_home_dev/`）：
 
@@ -228,25 +237,104 @@ pth 解析器：`app/voices/pth_parser.py` 中 `build_parser()`——配置了 `
 
 ---
 
-## 9. 接入真实后端（Runner 注册点）
+## 9. 真实后端 Runner（M1）
 
-`app/jobs/runner.py`：
+三个外部进程后端已接入（`app/runners/`），默认注册（`main.create_app`），`/health` 的 `job_types` 可见；
+配置缺失时 Job 失败并返回可操作错误码 `BACKEND_NOT_CONFIGURED`（附 `hint`），**不会静默回退 mock**。
 
-```python
-from app.jobs.runner import RunnerRegistry, ArtifactSpec, build_default_registry
+### 9.1 配置
 
-registry = build_default_registry()
-# 真实后端示例（M0.7 后）：训练/分离服务以子进程或 HTTP 客户端形式实现 Runner
-# registry.register("separate.pymss", lambda: PymssRunner(...), gpu=True,
-#                   description="pymss 分离（显存型）")
+| 变量 | 作用 | 必需任务 |
+|---|---|---|
+| `AMS_RVC_PYTHON` | RVC runtime python.exe | convert.msvc / convert.rvc（另供 /voices/scan 解析 pth） |
+| `AMS_RVC_ROOT` | RVC 整合包根目录（assets/weights、hubert、rmvpe、ffmpeg） | convert.rvc |
+| `AMS_PYMSS_PYTHON` | pymss 独立 venv 的 python.exe | separate.pymss |
+| `AMS_PYMSS_ROOT` | pymss 环境根目录（模型目录 = `<root>/models`） | separate.pymss |
+| `AMS_MSVC_TOOL` | `ams-tools/msvc2pth/msvc2pth.py` 路径 | convert.msvc |
+
+配置在**每次任务执行时读取**（改环境变量后重启服务即可生效；测试可用 monkeypatch 注入）。
+错误码：`BACKEND_NOT_CONFIGURED`（环境变量为空）、`BACKEND_PATH_NOT_FOUND`（python/目录/脚本不存在）、
+`INPUT_NOT_FOUND`、`INVALID_PARAMS`、`BACKEND_TIMEOUT`、`BACKEND_FAILED`、`BACKEND_PROTOCOL_ERROR`。
+
+### 9.2 任务类型与参数
+
+| type | GPU | 必需参数 | 可选参数 | 产物 |
+|---|---|---|---|---|
+| `convert.msvc` | 否 | `input_path`, `out_dir` | `name`, `reference_pth`, `no_cache` | `<out>/<name>/<name>.pth`、`conversion.json` |
+| `convert.rvc` | 是 | `input_path`, `voice_name` | `f0_up_key`(0), `index_rate`(0.75), `device`(cuda:0) | `<work_dir>/<stem>_<voice>.wav` + 同名 `.json` meta |
+| `separate.pymss` | 是 | `input_path`, `model` | `device`(auto), `chunk` | `<work_dir>/stems/*.wav` + `separation-manifest.json` |
+
+- `convert.msvc`：RVC runtime + `msvc2pth.py`，解析 `--json` 报告（失败回退读取 `conversion.json`）；实时把工具 stdout/stderr 转任务日志，并按 `[cache]/[calibrate]` 推进阶段进度。
+- `convert.rvc`：RVC runtime + `app/runners/scripts/rvc_convert.py`；脚本内含 **faiss 非 ASCII 路径兼容补丁**（RVC 原生会静默忽略 index）；推理期间用心跳进度（RVC 无回调）。
+- `separate.pymss`：pymss 独立环境 + `scripts/pymss_separate.py`；使用 pymss `progress_callback` 流式进度，产物为各 stem wav + manifest。
+- 输出统一写在 Job 的 `work_dir`（`AMS_HOME/artifacts/<job_id>/`）；Gateway 负责落库、算大小/sha256、发 SSE artifact 事件。
+- GPU 标记：`convert.rvc` / `separate.pymss` = true，`convert.msvc` = false；GPU 任务自动串行（`gpu_lock`）。
+
+### 9.3 调用示例（PowerShell）
+
+```powershell
+$h = @{ Authorization = "Bearer $token" }
+$base = "http://127.0.0.1:<port>"
+
+# 1) RVC 换声
+$body = @{
+  type   = "convert.rvc"
+  params = @{ input_path = "F:\work\vocal.wav"; voice_name = "manbo"; f0_up_key = 0; index_rate = 0.75; device = "cuda:0" }
+} | ConvertTo-Json -Depth 4
+Invoke-RestMethod -Method Post -Uri "$base/api/v1/jobs" -Headers $h -Body $body -ContentType "application/json"
+
+# 2) pymss 分离
+$body = @{
+  type   = "separate.pymss"
+  params = @{ input_path = "F:\work\song.wav"; model = "scnet_checkpoint_musdb18"; device = "auto" }
+} | ConvertTo-Json -Depth 4
+Invoke-RestMethod -Method Post -Uri "$base/api/v1/jobs" -Headers $h -Body $body -ContentType "application/json"
+
+# 3) MSVC -> pth
+$body = @{
+  type   = "convert.msvc"
+  params = @{ input_path = "F:\work\voice.msvc"; out_dir = "F:\AMS\voices"; name = "voice1" }
+} | ConvertTo-Json -Depth 4
+Invoke-RestMethod -Method Post -Uri "$base/api/v1/jobs" -Headers $h -Body $body -ContentType "application/json"
 ```
 
-约定：
+错误示例（未配置后端时 Job 失败，不是 RUNNER_ERROR）：
 
-- `Runner.run(ctx)` 内通过 `await ctx.progress(percent, stage, message?)` 上报进度、`ctx.log(level, msg)` 写任务日志；
-- 长任务用子进程时，把 `kill_process_tree(pid)` 注册到 `ctx.add_kill_callback(...)`，取消时 Gateway 会杀进程树；
-- 返回 `ArtifactSpec` 列表，Gateway 负责落库、算大小/sha256、发 SSE artifact 事件；
-- GPU 任务注册时传 `gpu=True`，自动进 GPU 串行队列（`gpu_lock` 字段可见 waiting/held）。
+```json
+{"status":"failed","error":{"code":"BACKEND_NOT_CONFIGURED","message":"未配置 RVC runtime Python（环境变量 AMS_RVC_PYTHON 为空）","hint":"配置 AMS_RVC_PYTHON（RVC 整合包 runtime\\python.exe）"}}
+```
+
+### 9.4 子进程协议（脚本开发约定）
+
+`app/runners/scripts/` 下脚本由外部解释器执行，stdout 每行一个 JSON：
+
+```text
+{"type":"progress","percent":0-100,"stage":"...","message":"..."}
+{"type":"log","level":"info|warning|error","message":"..."}
+{"type":"artifact","name":"...","path":"绝对路径","kind":"audio|model|report","meta":{}}
+{"type":"result","ok":true,"artifacts":[...]?,"meta":{}}
+{"type":"result","ok":false,"error":{"code":"...","message":"...","hint":"..."}}
+```
+
+Runner 行为：stderr 逐行转任务日志；取消时 `kill_process_tree`（含子进程）；超时杀进程树并返回 `BACKEND_TIMEOUT`。
+RVC 脚本用 RVC runtime（Python 3.9）执行，pymss 脚本用 pymss venv（Python 3.12）执行——**Gateway venv 不安装 torch**。
+
+### 9.5 测试
+
+- 默认 `pytest -q`：**37 passed, 1 skipped**（真实 smoke 默认 skip）；fake backend 覆盖成功/失败/取消/未配置/路径不存在/参数校验。
+- fake 脚本：`tests/fake_protocol_backend.py`（JSONL 协议）、`tests/fake_msvc2pth.py`（msvc CLI + JSON 报告）。
+- 真实后端 smoke（手动）：设置 `AMS_TEST_REAL_BACKENDS=1`、`AMS_TEST_REAL_INPUT`（音频路径）、可选 `AMS_TEST_REAL_VOICE` 后运行：
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/test_runners.py -q -k real
+```
+
+- 本次实现已手工验证：`convert.rvc` 真机 **7.1s**（40k 单声道 wav，index 生效，RTF 0.096）；`separate.pymss` 真机 **6.4s**（GPU，4 stems + manifest，进度回调正常）。msvc 真实 `.msvc` 样例本机未找到，使用 fake tool 验证 CLI/JSON 解析。
+
+### 9.6 与 mock 的关系
+
+`ping` / `mock.long` 保持不变；真实后端注册在默认 registry 中（`register_backend_runners`）。
+测试/实验可用 `register_backend_runners(registry, rvc_script=..., pymss_script=...)` 注入 fake 脚本。
 
 ---
 
@@ -254,7 +342,7 @@ registry = build_default_registry()
 
 | 限制 | 说明 / 计划 |
 |---|---|
-| mock 任务无真实后端 | M0.7 接 RVC/pymss 冒烟；Runner 已留注册点 |
+| 真实后端需外部环境 | 依赖 `AMS_RVC_PYTHON`/`AMS_RVC_ROOT`/`AMS_PYMSS_PYTHON`/`AMS_PYMSS_ROOT`/`AMS_MSVC_TOOL`（启动器注入）；未配置时任务失败并给 hint，不静默走 mock |
 | 断点续跑未实现 | 重启会把 running/stopping 标 failed（code=GATEWAY_RESTARTED）；queued 自动重新入队 |
 | pth 解析依赖外部 RVC runtime | 配置 `AMS_RVC_PYTHON` 后启用；M0.4 由启动器注入 |
 | 无前端/无 WebUI | 插件与启动器作为客户端接入（M0.6） |
