@@ -42,6 +42,12 @@ def parse_args(argv=None):
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--source", default="hf-mirror")
     parser.add_argument("--no-download", action="store_true")
+    parser.add_argument(
+        "--param",
+        action="append",
+        default=[],
+        help="额外的 pymss 推理参数 key=value（可重复，如 --param chunk_size=240000）",
+    )
     parser.add_argument("--result-json", default="")
     return parser.parse_args(argv)
 
@@ -107,6 +113,8 @@ def main(argv=None) -> int:
             "--param",
             f"batch_size={args.batch_size}",
         ]
+        for extra in args.param:
+            cli_args.extend(["--param", extra])
         if not args.no_download:
             cli_args.append("--download")
         try:

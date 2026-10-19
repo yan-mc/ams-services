@@ -1,0 +1,155 @@
+{
+  "schema": "ams.pymss_gpu/1",
+  "task": "task-23",
+  "generated_at": "2026-10-19T23:02:00+08:00",
+  "report": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\M0_后端冒烟.md#8-gpu-实测task-23-追加torch-271cu128",
+  "environment": {
+    "python": "3.12.10",
+    "torch": "2.7.1+cu128",
+    "cuda": "12.8",
+    "cudnn": "9.7.1 (90701)",
+    "gpu": "NVIDIA GeForce RTX 4080 Laptop GPU",
+    "vram_mib": 12281,
+    "capability": "8.9",
+    "wheel_url": "https://download.pytorch.org/whl/cu128/torch-2.7.1%2Bcu128-cp312-cp312-win_amd64.whl",
+    "wheel_bytes": 3273024349,
+    "install_wall_sec": 679.3,
+    "venv_mb": 5949.7,
+    "uv_cache_mb": 7103.1
+  },
+  "scnet": {
+    "model": "scnet_checkpoint_musdb18",
+    "input_sec": 20,
+    "cpu": {
+      "wall_sec": 19.75,
+      "rtf": 0.5,
+      "peak_working_set_mb": 927.6,
+      "cpu_sec": 220.42,
+      "cpu_ratio": 11.16
+    },
+    "gpu_cold_batch1": {
+      "wall_sec": 5.642,
+      "rtf": 0.06,
+      "vram_alloc_mb": 5425,
+      "vram_reserved_mb": 5572,
+      "peak_working_set_mb": 1664.1
+    },
+    "gpu_warm_inprocess_batch1": {
+      "wall_sec": 5.026,
+      "rtf": 0.03,
+      "vram_alloc_mb": 491,
+      "vram_reserved_mb": 576
+    },
+    "gpu_cold_batch2": {
+      "wall_sec": 5.258,
+      "rtf": 0.05,
+      "vram_alloc_mb": 5555,
+      "vram_reserved_mb": 5828
+    },
+    "gpu_cold_batch4": {
+      "wall_sec": 5.746,
+      "rtf": 0.08,
+      "vram_alloc_mb": 5811,
+      "vram_reserved_mb": 6040
+    },
+    "speedup_end_to_end": 3.5,
+    "speedup_inference_rtf": "8-16x"
+  },
+  "bsr_hyperace": {
+    "model": "bs_roformer_voc_hyperacev2",
+    "model_bytes": 288724430,
+    "download_sec": 80.6,
+    "input_sec": 20,
+    "cpu": {
+      "wall_sec": 50.634,
+      "rtf": 2.11,
+      "peak_working_set_mb": 3178.7,
+      "cpu_sec": 887.2,
+      "cpu_ratio": 17.52
+    },
+    "gpu_cold_default_chunk": {
+      "chunk_size": 480000,
+      "overlap_size": 24000,
+      "wall_sec": 10.15,
+      "rtf": 0.28,
+      "vram_alloc_mb": 9226,
+      "vram_reserved_mb": 9300
+    },
+    "gpu_warm_inprocess_default_chunk": {
+      "wall_sec": 3.649,
+      "rtf": 0.06,
+      "vram_alloc_mb": 1457,
+      "vram_reserved_mb": 1774
+    },
+    "gpu_cold_small_chunk": {
+      "chunk_size": 240000,
+      "overlap_size": 12000,
+      "wall_sec": 6.27,
+      "rtf": 0.15,
+      "vram_alloc_mb": 2617,
+      "vram_reserved_mb": 2640
+    },
+    "recommendation_12gb": "chunk 240000 / overlap 12000, batch 1"
+  },
+  "consistency": {
+    "scnet_cpu_vs_gpu_batch1": {
+      "stems": 4,
+      "corr_min": 0.999136,
+      "corr_mean": 0.999784,
+      "max_abs_diff": 0.000242,
+      "duration_diff_ms": 0
+    },
+    "scnet_cpu_vs_gpu_batch4": {
+      "stems": 4,
+      "corr_min": 0.999125,
+      "corr_mean": 0.999781,
+      "max_abs_diff": 0.000255,
+      "duration_diff_ms": 0
+    },
+    "bsr_cpu_vs_gpu_batch1": {
+      "stems": 2,
+      "corr_min": 0.99998,
+      "corr_mean": 0.999983,
+      "max_abs_diff": 0.00208,
+      "duration_diff_ms": 0
+    }
+  },
+  "outputs": {
+    "scnet_gpu": "07_执行计划/验证/audio/pymss_scnet_20s_gpu",
+    "scnet_gpu_b1_b2_b4": [
+      "pymss_scnet_20s_gpu_b1",
+      "pymss_scnet_20s_gpu_b2",
+      "pymss_scnet_20s_gpu_b4"
+    ],
+    "bsr_gpu": "07_执行计划/验证/audio/pymss_bsr_20s_gpu",
+    "bsr_gpu_smallchunk": "07_执行计划/验证/audio/pymss_bsr_20s_gpu_smallchunk",
+    "bsr_cpu": "07_执行计划/验证/audio/pymss_bsr_20s_cpu"
+  },
+  "results": {
+    "dir": "experiments/results",
+    "files": [
+      "pymss_gpu_scnet_b1.json",
+      "pymss_gpu_scnet_b1_cold.json",
+      "pymss_gpu_scnet_b2_cold.json",
+      "pymss_gpu_scnet_b4_cold.json",
+      "pymss_gpu_bsr_b1.json",
+      "pymss_gpu_bsr_smallchunk.json",
+      "pymss_cpu_bsr_b1.json",
+      "compare_scnet_cpu_gpu.json",
+      "compare_scnet_cpu_gpu_b4.json",
+      "compare_bsr_cpu_gpu.json"
+    ]
+  },
+  "scripts": [
+    "pymss_gpu_bench.py",
+    "compare_stems.py",
+    "pymss_smoke.ps1"
+  ],
+  "gateway_runner_notes": [
+    "device=auto: CUDA 可用则 cuda:0，否则 CPU；新增错误码 SEP_CUDA_UNAVAILABLE",
+    "vram_estimate_mb: SCNet≈5500, BSR 默认≈9300, BSR chunk240k≈2600",
+    "12GB 默认参数: batch=1；BSR/Mel-Band 类 chunk=240000/overlap=12000",
+    "服务启动设置 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
+    "同一时刻只跑 1 个 GPU 分离任务；产物 meta 记录 engine/vram_peak/rtf"
+  ]
+}

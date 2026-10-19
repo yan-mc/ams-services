@@ -10,8 +10,10 @@
 experiments/
 ├─ rvc_smoke.py              # RVC 换声冒烟脚本（RVC runtime 执行；含 faiss 非 ASCII 兼容补丁）
 ├─ pymss_smoke.ps1           # pymss 环境搭建 + 最小分离一键脚本（CPU 默认，-Gpu 切换 cu128）
+├─ pymss_gpu_bench.py        # pymss CPU/GPU 基准（进程内跑 CLI，采集 RTF/显存/内存）
+├─ compare_stems.py          # 两套 pymss 输出（CPU vs GPU）逐 stem 相关性/差异对比
 ├─ README.md                 # 本文件
-├─ results/                  # rvc_smoke.json / rvc_smoke_noindex.json / smoke_summary.json
+├─ results/                  # rvc_smoke*.json / smoke_summary.json / pymss_gpu_*.json / compare_*.json
 ├─ logs/                     # RVC/pymss 运行日志
 ├─ work/                     # 输入片段、对比脚本、源目录文件快照
 ├─ pymss/                    # pymss 独立环境（.venv）与模型（models/，均由脚本生成，可删）
@@ -27,7 +29,8 @@ experiments/
 | RVC 整合包 | `F:\ai歌曲\RVC20260311`（runtime Python 3.9.13 + torch 2.0.0+cu118） |
 | 系统 Python | 3.12.10（仅用于创建 venv；不安装任何包到系统） |
 | uv | 0.13.1（`experiments/tools-uv/.venv` 内） |
-| pymss 环境 | `experiments/pymss/.venv`：Python 3.12.10 + torch 2.7.1+cpu + pymss 2.1.9 + pymss-core 0.1.11 |
+| pymss 环境 | `experiments/pymss/.venv`：Python 3.12.10 + **torch 2.7.1+cu128**（task-23 由 CPU 版替换）+ pymss 2.1.9 + pymss-core 0.1.11 |
+| pymss 环境体积 | venv **5,950MB**；uv cache **7,103MB**；模型 **316MB**（SCNet 42MB + BSR HyperACE 289MB） |
 | GPU | RTX 4080 Laptop 12GB（驱动 610.88） |
 | 模型 | RVC：manbo.pth（55.2MB）+ manbo.index（141.4MB）；pymss：scnet_checkpoint_musdb18（42.4MB） |
 
@@ -75,6 +78,43 @@ $env:PYMSS_MODEL_DIR = "$exp\pymss\models"
 ```
 
 实测（20s 音乐 / CPU）：首次 37s（RTF 0.95），热缓存后 20–22s（RTF 0.50–0.53）；CPU 时间 ~220s（≈11 核）；峰值工作集 928MB；输出 4 stems（44.1k 立体声 float wav）。
+
+## 4.1 GPU 实测（task-23，torch 2.7.1+cu128）
+
+安装（2026-10-19；wheel 3.05GiB，下载+安装 679.3s，官方源约 5.25MB/s）：
+
+```powershell
+$exp = "F:\Deepseek_harness\AI音乐处理\08_项目代码\ams-services\experiments"
+$uv  = "$exp\tools-uv\.venv\Scripts\uv.exe"
+& $uv pip install --python "$exp\pymss\.venv\Scripts\python.exe" \
+  https://download.pytorch.org/whl/cu128/torch-2.7.1%2Bcu128-cp312-cp312-win_amd64.whl
+# 校验
+& "$exp\pymss\.venv\Scripts\python.exe" -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+基准（进程内跑 pymss CLI，采集 RTF/显存/内存）：
+
+```powershell
+$py = "$exp\pymss\.venv\Scripts\python.exe"; $models = "$exp\pymss\models"
+& $py -B "$exp\pymss_gpu_bench.py" --model scnet_checkpoint_musdb18 --model-dir $models ^
+  --input "$exp\work\input_music_20s.wav" --output "F:\Deepseek_harness\AI音乐处理\07_执行计划\验证\audio\pymss_scnet_20s_gpu" ^
+  --device cuda --batch-size 1 --runs 2 --result-json "$exp\results\pymss_gpu_scnet_b1.json"
+# 逐 stem 对比 CPU/GPU
+& $py -B "$exp\compare_stems.py" --a "验证\audio\pymss_scnet_20s" --b "验证\audio\pymss_scnet_20s_gpu" --result-json "$exp\results\compare_scnet_cpu_gpu.json"
+```
+
+| 场景（20s 音频） | CPU | GPU（cold） | GPU（warm/同进程） |
+|---|---|---|---|
+| SCNet 4 轨 RTF | 0.50 | 0.06 | 0.03 |
+| SCNet 墙钟 | 19.75s | 5.64s | 5.03s |
+| SCNet 显存峰值 | — | 5.4GB alloc / 5.6GB reserved | 491MB（分配器复用） |
+| BSR HyperACE 275MB RTF | 2.11 | 0.28 | 0.06 |
+| BSR 墙钟 | 50.63s | 10.15s | 3.65s |
+| BSR 显存峰值（默认 chunk 480000） | — | **9.3GB（12GB 偏紧）** | 1.46GB |
+| BSR 显存峰值（chunk 240000/12000） | — | **2.6GB、RTF 0.15** | — |
+| CPU↔GPU stems 相关性 | — | corr ≥ **0.9991**（SCNet）/ **0.99998**（BSR） | — |
+
+结论：12GB 上 **SCNet 默认可用（~5.5GB）**；**BSR/Mel-Band 必须降 chunk（建议 240000/12000）**；GPU 与 CPU 输出语义一致。详见报告 §8。
 
 ## 5. 关键坑（务必看）
 

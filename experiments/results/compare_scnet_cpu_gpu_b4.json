@@ -1,0 +1,79 @@
+{
+  "schema": "ams.stems_compare/1",
+  "dir_a": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\pymss_scnet_20s",
+  "dir_b": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\pymss_scnet_20s_gpu_b4",
+  "label_a": "cpu",
+  "label_b": "gpu",
+  "stems": {
+    "bass": {
+      "a_file": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\pymss_scnet_20s\\input_music_20s\\input_music_20s_bass.wav",
+      "b_file": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\pymss_scnet_20s_gpu_b4\\input_music_20s\\input_music_20s_bass.wav",
+      "sample_rate_a": 44100,
+      "sample_rate_b": 44100,
+      "duration_sec_a": 20.0,
+      "duration_sec_b": 20.0,
+      "duration_diff_ms": 0.0,
+      "corr": 1.0,
+      "rms_a": 0.007659,
+      "rms_b": 0.007656,
+      "rms_ratio_b_over_a": 0.9996,
+      "rms_diff": 7e-06,
+      "mean_abs_diff": 5e-06,
+      "max_abs_diff": 5.5e-05
+    },
+    "drums": {
+      "a_file": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\pymss_scnet_20s\\input_music_20s\\input_music_20s_drums.wav",
+      "b_file": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\pymss_scnet_20s_gpu_b4\\input_music_20s\\input_music_20s_drums.wav",
+      "sample_rate_a": 44100,
+      "sample_rate_b": 44100,
+      "duration_sec_a": 20.0,
+      "duration_sec_b": 20.0,
+      "duration_diff_ms": 0.0,
+      "corr": 0.999125,
+      "rms_a": 8.9e-05,
+      "rms_b": 8.9e-05,
+      "rms_ratio_b_over_a": 1.0028,
+      "rms_diff": 4e-06,
+      "mean_abs_diff": 3e-06,
+      "max_abs_diff": 2.7e-05
+    },
+    "other": {
+      "a_file": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\pymss_scnet_20s\\input_music_20s\\input_music_20s_other.wav",
+      "b_file": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\pymss_scnet_20s_gpu_b4\\input_music_20s\\input_music_20s_other.wav",
+      "sample_rate_a": 44100,
+      "sample_rate_b": 44100,
+      "duration_sec_a": 20.0,
+      "duration_sec_b": 20.0,
+      "duration_diff_ms": 0.0,
+      "corr": 1.0,
+      "rms_a": 0.027646,
+      "rms_b": 0.02764,
+      "rms_ratio_b_over_a": 0.9998,
+      "rms_diff": 2.1e-05,
+      "mean_abs_diff": 1.4e-05,
+      "max_abs_diff": 0.000217
+    },
+    "vocals": {
+      "a_file": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\pymss_scnet_20s\\input_music_20s\\input_music_20s_vocals.wav",
+      "b_file": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\pymss_scnet_20s_gpu_b4\\input_music_20s\\input_music_20s_vocals.wav",
+      "sample_rate_a": 44100,
+      "sample_rate_b": 44100,
+      "duration_sec_a": 20.0,
+      "duration_sec_b": 20.0,
+      "duration_diff_ms": 0.0,
+      "corr": 1.0,
+      "rms_a": 0.024577,
+      "rms_b": 0.024574,
+      "rms_ratio_b_over_a": 0.9999,
+      "rms_diff": 1.9e-05,
+      "mean_abs_diff": 8e-06,
+      "max_abs_diff": 0.000255
+    }
+  },
+  "summary": {
+    "stem_count": 4,
+    "corr_min": 0.999125,
+    "corr_mean": 0.999781,
+    "max_abs_diff_max": 0.000255
+  }
+}

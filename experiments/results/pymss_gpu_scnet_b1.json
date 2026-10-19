@@ -1,0 +1,43 @@
+{
+  "schema": "ams.pymss_bench/1",
+  "model": "scnet_checkpoint_musdb18",
+  "input": "F:\\Deepseek_harness\\AI音乐处理\\08_项目代码\\ams-services\\experiments\\work\\input_music_20s.wav",
+  "output": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\pymss_scnet_20s_gpu",
+  "batch_size": 1,
+  "runs": [
+    {
+      "run": 1,
+      "exit_code": 0,
+      "wall_sec": 8.166,
+      "cpu_sec": 2.906,
+      "cpu_ratio": 0.36,
+      "rtf_reported": 0.07,
+      "vram_peak_alloc_mb": 5425,
+      "vram_peak_reserved_mb": 5572,
+      "peak_working_set_mb": 1680.8,
+      "rss_mb": 1620.4
+    },
+    {
+      "run": 2,
+      "exit_code": 0,
+      "wall_sec": 5.026,
+      "cpu_sec": 1.344,
+      "cpu_ratio": 0.27,
+      "rtf_reported": 0.03,
+      "vram_peak_alloc_mb": 491,
+      "vram_peak_reserved_mb": 576,
+      "peak_working_set_mb": 1688.2,
+      "rss_mb": 1616.6
+    }
+  ],
+  "device_info": {
+    "device": "cuda",
+    "torch": "2.7.1+cu128",
+    "cuda_available": true,
+    "cuda_version": "12.8",
+    "cudnn_version": 90701,
+    "gpu": "NVIDIA GeForce RTX 4080 Laptop GPU",
+    "vram_total_mb": 12281,
+    "capability": "8.9"
+  }
+}

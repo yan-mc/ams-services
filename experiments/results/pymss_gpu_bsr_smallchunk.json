@@ -1,0 +1,31 @@
+{
+  "schema": "ams.pymss_bench/1",
+  "model": "bs_roformer_voc_hyperacev2",
+  "input": "F:\\Deepseek_harness\\AI音乐处理\\08_项目代码\\ams-services\\experiments\\work\\input_music_20s.wav",
+  "output": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\pymss_bsr_20s_gpu_smallchunk",
+  "batch_size": 1,
+  "runs": [
+    {
+      "run": 1,
+      "exit_code": 0,
+      "wall_sec": 6.27,
+      "cpu_sec": 3.578,
+      "cpu_ratio": 0.57,
+      "rtf_reported": 0.15,
+      "vram_peak_alloc_mb": 2617,
+      "vram_peak_reserved_mb": 2640,
+      "peak_working_set_mb": 2097.3,
+      "rss_mb": 2094.2
+    }
+  ],
+  "device_info": {
+    "device": "cuda",
+    "torch": "2.7.1+cu128",
+    "cuda_available": true,
+    "cuda_version": "12.8",
+    "cudnn_version": 90701,
+    "gpu": "NVIDIA GeForce RTX 4080 Laptop GPU",
+    "vram_total_mb": 12281,
+    "capability": "8.9"
+  }
+}
