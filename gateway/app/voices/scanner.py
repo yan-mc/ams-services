@@ -17,6 +17,26 @@ from pathlib import Path
 from .pth_parser import MetadataParser, NullParser
 
 INVALID_CHARS = set('<>:"/\\|?*')
+
+
+def normalize_sample_rate(value) -> int | None:
+    """把 pth 里的 sr 统一成整数 Hz（兼容 40k/48k/44.1k/40000 等写法）。"""
+    if value is None:
+        return None
+    text = str(value).strip().lower().replace("hz", "").replace(" ", "")
+    aliases = {
+        "32k": 32000, "32khz": 32000, "32000": 32000,
+        "40k": 40000, "40khz": 40000, "40000": 40000,
+        "44k": 44100, "44.1k": 44100, "44100": 44100,
+        "48k": 48000, "48khz": 48000, "48000": 48000,
+    }
+    if text in aliases:
+        return aliases[text]
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        return None
+
 RESERVED_NAMES = {
     "CON", "PRN", "AUX", "NUL",
     *(f"COM{index}" for index in range(1, 10)),
@@ -200,7 +220,8 @@ def _scan_one(directory: Path, parser: MetadataParser) -> VoiceEntry:
         if parsed.status == "ok":
             entry.meta = parsed.meta
             sr = (parsed.meta or {}).get("sr")
-            if sr is not None and str(sr) not in {"40000", "44100", "48000"}:
+            sr_hz = normalize_sample_rate(sr)
+            if sr is not None and sr_hz not in {32000, 40000, 44100, 48000}:
                 if entry.status == "ok":
                     entry.status = "warning"
                 entry.issues.append(

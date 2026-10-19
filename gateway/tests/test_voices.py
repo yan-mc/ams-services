@@ -120,3 +120,14 @@ def test_api_voices_scan(client, auth, ams_home: Path):
     listed = client.get("/api/v1/voices", headers=auth)
     assert listed.status_code == 200
     assert listed.json()["data"]["count"] >= 1
+
+def test_normalize_sample_rate():
+    from app.voices.scanner import normalize_sample_rate
+
+    assert normalize_sample_rate("40k") == 40000
+    assert normalize_sample_rate("48k") == 48000
+    assert normalize_sample_rate("44.1k") == 44100
+    assert normalize_sample_rate("40000") == 40000
+    assert normalize_sample_rate("48KHz") == 48000
+    assert normalize_sample_rate(None) is None
+    assert normalize_sample_rate("abc") is None
