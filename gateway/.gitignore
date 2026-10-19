@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# 虚拟环境（本目录内独立 venv；不进 Git）
+.venv/
+venv/
+
+# 本地运行数据（AMS_HOME 开发默认目录、运行期 token/DB/日志/产物）
+.ams_home_dev/
+runtime/
+logs/
+
+# 编辑器
+.idea/
+.vscode/

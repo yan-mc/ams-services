@@ -1,0 +1,4 @@
+# 开发/测试依赖。推荐直接：.venv\Scripts\python.exe -m pip install -e ".[dev]"
+-r requirements.txt
+pytest>=8,<9
+httpx>=0.27,<1
