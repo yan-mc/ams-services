@@ -1,0 +1,206 @@
+{
+  "schema": "ams.smoke/1",
+  "task": "M0.7",
+  "generated_at": "2026-10-19T22:22:00+08:00",
+  "report": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\M0_后端冒烟.md",
+  "hardware": {
+    "os": "Windows 11 build 26300",
+    "cpu": "i9-13900HX",
+    "ram_gb": 32,
+    "gpu": "NVIDIA RTX 4080 Laptop",
+    "vram_mib": 12282,
+    "driver": "610.88"
+  },
+  "rvc": {
+    "status": "ok",
+    "runtime": {
+      "python": "3.9.13",
+      "torch": "2.0.0+cu118",
+      "cuda": "11.8"
+    },
+    "model": {
+      "name": "manbo",
+      "path_note": "F:/ai歌曲/RVC20260311/assets/weights/manbo.pth",
+      "bytes": 55222703,
+      "version": "v2",
+      "sr": "40k",
+      "f0": 1,
+      "info": "100epoch",
+      "n_spk": 109,
+      "weight_tensors": 457
+    },
+    "index": {
+      "path_note": "F:/ai歌曲/RVC20260311/assets/indices/manbo.index",
+      "bytes": 141362899,
+      "ntotal": 44750,
+      "dim": 768
+    },
+    "input": {
+      "file": "experiments/work/input_vocal_35s.wav",
+      "duration_sec": 35,
+      "sample_rate": 44100,
+      "channels": 2
+    },
+    "params": {
+      "f0_method": "rmvpe",
+      "index_rate": 0.75,
+      "f0up_key": 0,
+      "protect": 0.33,
+      "rms_mix_rate": 0.25,
+      "filter_radius": 3,
+      "is_half": true,
+      "device": "cuda:0",
+      "speaker_id": 0
+    },
+    "output": {
+      "file": "07_执行计划/验证/audio/rvc_manbo40k_35s.wav",
+      "sample_rate": 40000,
+      "channels": 1,
+      "format": "wav/pcm_24",
+      "duration_sec": 34.98,
+      "duration_diff_ms": 20,
+      "peak": 0.501923,
+      "peak_dbfs": -5.99,
+      "clipped_samples": 0,
+      "bytes": 4197644
+    },
+    "timings": {
+      "load_model_sec": 0.457,
+      "infer_sec": 4.491,
+      "total_sec": 7.828,
+      "rtf": 0.1283
+    },
+    "vram": {
+      "peak_alloc_mb": 1306,
+      "peak_reserved_mb": 1656
+    },
+    "index_finding": {
+      "issue": "faiss cannot open non-ASCII paths; RVC pipeline silently ignores index (index_rate ineffective)",
+      "workaround": "faiss.deserialize_index fallback / subst ASCII drive / ASCII cache path",
+      "fallback_used": 1,
+      "ab_corr_vs_noindex": 0.87294,
+      "ab_mean_abs_diff": 0.01457,
+      "ab_rms_diff": 0.0315
+    },
+    "source_tree_unchanged": {
+      "files_before": 39770,
+      "files_after": 39770
+    }
+  },
+  "pymss": {
+    "status": "ok-cpu-only",
+    "env": {
+      "uv": "0.13.1",
+      "python": "3.12.10",
+      "torch": "2.7.1+cpu",
+      "pymss": "2.1.9",
+      "pymss_core": "0.1.11",
+      "numpy": "2.5.4",
+      "librosa": "1.0.0",
+      "av": "19.0.1",
+      "soundfile": "0.14.0"
+    },
+    "wheels": {
+      "cpu_torch_bytes": 215985616,
+      "cu128_torch_bytes": 3273024349,
+      "cu128_installed": false
+    },
+    "install": {
+      "install_wall_sec": 98.8,
+      "venv_mb": 1593.7,
+      "uv_cache_mb": 1586
+    },
+    "model": {
+      "name": "scnet_checkpoint_musdb18",
+      "bytes": 42434986,
+      "yaml_bytes": 1662,
+      "sample_rate": 44100,
+      "chunk_size": 485100,
+      "overlap_size": 363825,
+      "sources": [
+        "drums",
+        "bass",
+        "other",
+        "vocals"
+      ]
+    },
+    "input": {
+      "file": "experiments/work/input_music_20s.wav",
+      "duration_sec": 20,
+      "sample_rate": 44100,
+      "channels": 2
+    },
+    "runs": [
+      {
+        "run": 1,
+        "device": "cpu",
+        "wall_sec": 37,
+        "rtf_reported": 0.95,
+        "note": "cold"
+      },
+      {
+        "run": 2,
+        "device": "cpu",
+        "wall_sec": 20.42,
+        "rtf_reported": 0.5
+      },
+      {
+        "run": 3,
+        "device": "cpu",
+        "wall_sec": 21.01,
+        "rtf_reported": 0.51
+      },
+      {
+        "run": 4,
+        "device": "cpu",
+        "wall_sec": 21.75,
+        "rtf_reported": 0.53
+      },
+      {
+        "run": 6,
+        "device": "cpu",
+        "wall_sec": 19.75,
+        "rtf_reported": 0.5,
+        "cpu_sec": 220.42,
+        "cpu_ratio": 11.16,
+        "peak_working_set_mb": 927.6,
+        "rss_mb": 826.8
+      }
+    ],
+    "outputs": {
+      "dir": "07_执行计划/验证/audio/pymss_scnet_20s/input_music_20s",
+      "files": 4,
+      "each_bytes": 7056088
+    },
+    "consistency": {
+      "corr_mix_sum_stems": 1,
+      "relative_residual_rms": 0.0093,
+      "stems_rms": {
+        "bass": 0.0077,
+        "drums": 0.0001,
+        "other": 0.0339,
+        "vocals": 0.025
+      }
+    },
+    "next_steps": {
+      "cu128_install": "uv pip install --index-url https://download.pytorch.org/whl/cu128 torch==2.7.1",
+      "retest": "pymss infer --device cuda; record RTF/VRAM; try bs_roformer_voc_hyperacev2 (275MB)"
+    }
+  },
+  "evidence": {
+    "experiment_dir": "F:\\Deepseek_harness\\AI音乐处理\\08_项目代码\\ams-services\\experiments",
+    "scripts": [
+      "rvc_smoke.py",
+      "pymss_smoke.ps1"
+    ],
+    "results": [
+      "results/rvc_smoke.json",
+      "results/rvc_smoke_noindex.json"
+    ],
+    "logs": [
+      "logs/rvc_smoke_index.log",
+      "logs/pymss_infer_stderr.log"
+    ],
+    "audio_dir": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio"
+  }
+}

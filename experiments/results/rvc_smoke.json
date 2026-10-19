@@ -1,0 +1,67 @@
+{
+  "status": "ok",
+  "params": {
+    "rvc_root": "F:\\ai歌曲\\RVC20260311",
+    "input": "F:\\Deepseek_harness\\AI音乐处理\\08_项目代码\\ams-services\\experiments\\work\\input_vocal_35s.wav",
+    "output": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\rvc_manbo40k_35s.wav",
+    "model": "manbo.pth",
+    "speaker_id": 0,
+    "index": "assets/indices/manbo.index",
+    "f0_method": "rmvpe",
+    "f0up_key": 0,
+    "index_rate": 0.75,
+    "filter_radius": 3,
+    "resample_sr": 0,
+    "rms_mix_rate": 0.25,
+    "protect": 0.33,
+    "is_half": true,
+    "device": "cuda:0",
+    "result_json": "F:\\Deepseek_harness\\AI音乐处理\\08_项目代码\\ams-services\\experiments\\results\\rvc_smoke.json",
+    "index_compat": true,
+    "index_resolved": "F:\\ai歌曲\\RVC20260311\\assets\\indices\\manbo.index"
+  },
+  "env": {
+    "rvc_root": "F:\\ai歌曲\\RVC20260311",
+    "python": "3.9.13",
+    "rvc_env": {
+      "weight_root": "assets/weights",
+      "index_root": "logs",
+      "rmvpe_root": "assets/rmvpe",
+      "outside_index_root": "assets/indices"
+    },
+    "torch": "2.0.0+cu118",
+    "cuda": "11.8",
+    "cuda_available": true,
+    "device": "cuda:0",
+    "is_half": true,
+    "gpu": "NVIDIA GeForce RTX 4080 Laptop GPU",
+    "vram_total_mb": 12281
+  },
+  "timings": {
+    "load_model_sec": 0.457,
+    "infer_sec": 4.491,
+    "total_sec": 7.828,
+    "rtf_infer": 0.1283,
+    "wall_sec": 7.828
+  },
+  "index_compat": "deserialize-fallback",
+  "rvc_info": "Success.\nIndex:\nF:\\ai歌曲\\RVC20260311\\assets\\indices\\manbo.index.\nTime:\nnpy: 0.25s, f0: 1.45s, infer: 1.02s.",
+  "index_compat_stats": {
+    "fallback_used": 1,
+    "errors": []
+  },
+  "output": "F:\\Deepseek_harness\\AI音乐处理\\07_执行计划\\验证\\audio\\rvc_manbo40k_35s.wav",
+  "output_bytes": 4197644,
+  "output_sample_rate": 40000,
+  "output_channels": 1,
+  "output_source_dtype": "int16",
+  "input_duration_sec": 35.0,
+  "output_duration_sec": 34.98,
+  "duration_diff_ms": 20.0,
+  "output_peak": 0.501923,
+  "output_peak_dbfs": -5.99,
+  "output_clipped_samples": 0,
+  "output_format": "wav/pcm_24",
+  "vram_peak_alloc_mb": 1306,
+  "vram_peak_reserved_mb": 1656
+}

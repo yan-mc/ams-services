@@ -1,0 +1,15 @@
+# 本目录是实验目录：大文件/环境/日志不提交
+.venv/
+tools-uv/
+pymss/.venv/
+pymss/models/
+cache/
+tmp/
+work/*.wav
+work/*.index
+work/voices_*/
+logs/*.log
+__pycache__/
+*.pyc
+# 源目录快照（太大，不入库）
+work/*_files_*.txt
