@@ -21,3 +21,7 @@ logs/
 .idea/
 .vscode/
 .smoke-work/
+build/.venv-build/
+build/pyinstaller-work/
+build/dist/
+build/logs/
