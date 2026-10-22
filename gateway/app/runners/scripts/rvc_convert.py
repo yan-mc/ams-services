@@ -161,6 +161,7 @@ def main(argv=None):
         faiss.read_index = _read_index_unicode_safe
 
         progress(6, "load_model", "加载 RVC 模型（Hubert/RMVPE 在首次推理时加载）")
+        os.environ["weight_root"] = str(voice_path.parent)
         vc = VC(config)
         vc.get_vc(voice_path.name)
         if torch.cuda.is_available():
