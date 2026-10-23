@@ -82,6 +82,18 @@ class Settings:
         return self.ams_home / "artifacts"
 
     @property
+    def projects_dir(self) -> Path:
+        return self.ams_home / "projects"
+
+    @property
+    def imports_dir(self) -> Path:
+        return self.projects_dir / "imports"
+
+    @property
+    def tmp_dir(self) -> Path:
+        return self.ams_home / "tmp"
+
+    @property
     def db_path(self) -> Path:
         return self.config_dir / "state.db"
 
@@ -101,6 +113,9 @@ class Settings:
             self.logs_dir,
             self.voices_dir,
             self.artifacts_dir,
+            self.projects_dir,
+            self.imports_dir,
+            self.tmp_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 

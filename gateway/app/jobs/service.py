@@ -23,6 +23,7 @@ from typing import Any
 from ..config import Settings
 from ..db import Database, TERMINAL_STATUSES, utc_now
 from ..errors import ApiError
+from ..paths import sanitize_job_params
 from .events import EventBus
 from .runner import ArtifactSpec, JobCancelled, JobContext, RunnerRegistry, sha256_file
 
@@ -166,6 +167,7 @@ class JobService:
                 {"known_types": known.split(", ") if known else []},
             )
         gpu = self.registry.is_gpu(job_type)
+        params = sanitize_job_params(params, settings=self.settings, project_id=project_id)
         engine = {"name": "ams-gateway", "version": self.settings.version, "runner": job_type}
         job = self.db.create_job(
             job_type=job_type,

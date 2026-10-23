@@ -8,6 +8,7 @@ from ..jobs.runner import RunnerRegistry
 from .msvc import MsvcConvertRunner
 from .pymss import PymssSeparateRunner
 from .rvc import RvcConvertRunner
+from .tts import TtsSynthesizeRunner
 
 BACKEND_JOB_TYPES = (
     {
@@ -24,6 +25,11 @@ BACKEND_JOB_TYPES = (
         "type": "separate.pymss",
         "gpu": True,
         "description": "pymss 分离（pymss 独立环境 + scripts/pymss_separate.py）",
+    },
+    {
+        "type": "tts.synthesize",
+        "gpu": False,
+        "description": "Piper 离线语音合成（runtime.tts）",
     },
 )
 
@@ -52,5 +58,11 @@ def register_backend_runners(
         lambda: PymssSeparateRunner(script_path=pymss_script),
         gpu=True,
         description=BACKEND_JOB_TYPES[2]["description"],
+    )
+    registry.register(
+        "tts.synthesize",
+        lambda: TtsSynthesizeRunner(),
+        gpu=False,
+        description=BACKEND_JOB_TYPES[3]["description"],
     )
     return registry
