@@ -1,5 +1,10 @@
 # ams-services
 
+> **AMS Studio 子项目 · 本地服务层**  
+> AMS 的本地 Gateway 与各个 AI 音频后端（RVC、pymss、MSVC 等）的 HTTP 任务入口，只监听 127.0.0.1，由启动器管理生命周期。  
+> 总仓库：https://github.com/yan-mc/AMS-Studio
+
+
 AMS（AI Music Studio）本地服务：Gateway + 各后端服务。
 
 ## 当前内容（M0）
