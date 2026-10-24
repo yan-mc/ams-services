@@ -144,7 +144,10 @@ class RvcEngine:
         self.last_error = ""
         self.infer_ms = 0.0
         self.max_infer_ms = 0.0
+        self.input_level = 0.0
+        self.output_level = 0.0
         self.callback_ms = 0.0
+        self.infer_samples = []
         self._librosa = librosa
         self._torch = torch
         self._f0method = f0method
@@ -157,6 +160,7 @@ class RvcEngine:
             if mono.ndim > 1:
                 mono = mono[:, 0]
             mono = mono.astype(np.float32, copy=False)
+            self.input_level = float(np.sqrt(np.mean(mono * mono))) if mono.size else 0.0
             if mono.shape[0] < self.block_frame:
                 mono = np.pad(mono, (0, self.block_frame - mono.shape[0]))
             if mono.shape[0] > self.block_frame:
@@ -174,6 +178,9 @@ class RvcEngine:
             )
             self.infer_ms = round((time.perf_counter() - infer_started) * 1000.0, 2)
             self.max_infer_ms = max(self.max_infer_ms, self.infer_ms)
+            self.infer_samples.append(self.infer_ms)
+            if len(self.infer_samples) > 240:
+                self.infer_samples = self.infer_samples[-240:]
             conv_input = infer[None, None, :self.sola_buffer_frame + self.sola_search_frame]
             cor_nom = torch.nn.functional.conv1d(conv_input, self.sola_buffer[None, None, :])
             cor_den = torch.sqrt(torch.nn.functional.conv1d(conv_input ** 2, torch.ones(1, 1, self.sola_buffer_frame, device=self.config.device)) + 1e-8)
@@ -186,6 +193,7 @@ class RvcEngine:
             if out.shape[0] < frames:
                 out = torch.cat([out, torch.zeros(frames - out.shape[0], device=self.config.device)])
             outdata[:] = out[:frames].unsqueeze(1).cpu().numpy()
+            self.output_level = float(np.sqrt(np.mean(outdata * outdata)))
             self.frames += int(frames)
             self.callback_ms = round((time.perf_counter() - callback_started) * 1000.0, 2)
             with STATE_LOCK:
@@ -217,6 +225,8 @@ STATE = {
     "frames": 0,
     "input_frames": 0,
     "overflows": 0,
+    "input_level": 0.0,
+    "output_level": 0.0,
 }
 
 
@@ -941,6 +951,10 @@ def status_payload() -> dict:
         data = dict(STATE)
         engine = RVC_ENGINE
     data["devices"] = "call /vc/devices"
+    data["levels"] = {
+        "input": round(float(engine.input_level), 5) if engine is not None else round(float(data.get("input_level", 0.0)), 5),
+        "output": round(float(engine.output_level), 5) if engine is not None else round(float(data.get("output_level", 0.0)), 5),
+    }
     if engine is not None:
         data["stats"] = {
             "infer_ms": engine.infer_ms,
@@ -949,6 +963,7 @@ def status_payload() -> dict:
             "block_ms": round(engine.block_frame / engine.sr * 1000.0, 1),
             "buffer_ms": round((engine.extra_frame + engine.crossfade_frame) / engine.sr * 1000.0, 1),
             "estimated_latency_ms": round((engine.extra_frame + engine.crossfade_frame + engine.block_frame) / engine.sr * 1000.0 + engine.infer_ms, 1),
+            "infer_p95_ms": round(float(np.percentile(engine.infer_samples, 95)), 1) if engine.infer_samples else 0.0,
         }
     return {"ok": True, "data": data}
 
