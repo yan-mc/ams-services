@@ -61,6 +61,16 @@ def _prepare_data_env() -> None:
 
 _prepare_data_env()
 
+# Bundled loopback runtime.  It is extracted from service.vc under data; no
+# pip install, no system Python site-packages, and no user-profile writes.
+VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
+if VENDOR_DIR.is_dir() and str(VENDOR_DIR) not in sys.path:
+    sys.path.insert(0, str(VENDOR_DIR))
+try:
+    import pyaudiowpatch as pyaudio_loopback
+except Exception:
+    pyaudio_loopback = None
+
 import numpy as np
 import sounddevice as sd
 
@@ -236,11 +246,34 @@ def list_devices() -> dict:
             })
     cable_in = [x for x in outputs if x["kind"] == "virtual"]
     cable_out = [x for x in inputs if x["kind"] == "loopback"]
+    wasapi_loopbacks = []
+    if pyaudio_loopback is not None:
+        try:
+            pa = pyaudio_loopback.PyAudio()
+            try:
+                default = pa.get_default_wasapi_loopback()
+                default_index = int(default.get("index", -1)) if default else -1
+                for info in pa.get_loopback_device_info_generator():
+                    wasapi_loopbacks.append({
+                        "index": int(info["index"]),
+                        "value": "wasapi:" + str(info["index"]),
+                        "name": str(info["name"]),
+                        "hostapi": int(info.get("hostApi", -1)),
+                        "channels": int(info.get("maxInputChannels", 0)),
+                        "samplerate": float(info.get("defaultSampleRate", 48000)),
+                        "is_default": int(info["index"]) == default_index,
+                    })
+            finally:
+                pa.terminate()
+        except Exception:
+            wasapi_loopbacks = []
     return {
         "inputs": inputs,
         "outputs": outputs,
         "virtual_outputs": cable_in,
         "loopback_inputs": cable_out,
+        "wasapi_loopbacks": wasapi_loopbacks,
+        "has_wasapi_loopback": bool(wasapi_loopbacks),
         "has_vb_cable": bool(cable_in),
         "default_input": int(sd.default.device[0]),
         "default_output": int(sd.default.device[1]),
@@ -281,6 +314,60 @@ def _match_hostapi(input_device: int, output_device: int) -> tuple[int, int]:
     raise RuntimeError("输入和输出设备属于不同音频后端，请选择同一后端（例如 WDM-KS 的立体声混音 + WDM-KS 的 CABLE 输出）")
 
 
+class LoopbackStream:
+    """Bundled PyAudioWPatch loopback input + sounddevice output.
+
+    PyAudioWPatch loopback runs in a blocking-read worker thread instead of a
+    PortAudio callback; a callback from a second PortAudio instance can stay
+    silent when sounddevice also has an active output stream.
+    """
+    def __init__(self, pa, input_stream, output_stream, reader, frames):
+        self.pa = pa
+        self.input_stream = input_stream
+        self.output_stream = output_stream
+        self.reader = reader
+        self.frames = frames
+        self.stop_event = threading.Event()
+        self.worker = None
+
+    def _run(self):
+        while not self.stop_event.is_set():
+            try:
+                data = self.input_stream.read(self.frames, exception_on_overflow=False)
+            except Exception as exc:
+                with STATE_LOCK:
+                    STATE["last_error"] = str(exc)
+                break
+            try:
+                self.reader(data)
+            except Exception as exc:
+                with STATE_LOCK:
+                    STATE["last_error"] = str(exc)
+
+    def start(self):
+        self.output_stream.start()
+        self.input_stream.start_stream()
+        self.worker = threading.Thread(target=self._run, daemon=True)
+        self.worker.start()
+
+    def stop(self):
+        self.stop_event.set()
+        try: self.input_stream.stop_stream()
+        except Exception: pass
+        try: self.output_stream.stop()
+        except Exception: pass
+        if self.worker is not None:
+            self.worker.join(timeout=1.0)
+
+    def close(self):
+        try: self.input_stream.close()
+        except Exception: pass
+        try: self.output_stream.close()
+        except Exception: pass
+        try: self.pa.terminate()
+        except Exception: pass
+
+
 class SplitStream:
     def __init__(self, input_stream, output_stream):
         self.input_stream = input_stream
@@ -317,9 +404,15 @@ def start_session(params: dict) -> dict:
     with STATE_LOCK:
         if STATE["running"]:
             raise RuntimeError("session already running")
-    input_device = _pick_device("input", params.get("input_device"), params.get("input_name") or "USB Audio")
-    output_device = _pick_device("output", params.get("output_device"), params.get("output_name") or "VSpk")
-    input_device, output_device = _match_hostapi(input_device, output_device)
+    raw_input = str(params.get("input_device") or "")
+    input_provider = str(params.get("input_provider") or ("wasapi" if raw_input.startswith("wasapi:") else "")).lower()
+    if input_provider == "wasapi":
+        input_device = raw_input
+        output_device = _pick_device("output", params.get("output_device"), params.get("output_name") or "VSpk")
+    else:
+        input_device = _pick_device("input", params.get("input_device"), params.get("input_name") or "USB Audio")
+        output_device = _pick_device("output", params.get("output_device"), params.get("output_name") or "VSpk")
+        input_device, output_device = _match_hostapi(input_device, output_device)
     mode = str(params.get("mode") or "passthrough").lower()
     engine = None
     if mode == "rvc":
@@ -351,6 +444,117 @@ def start_session(params: dict) -> dict:
             samplerate = 48000
         blocksize = max(256, samplerate // 100)
         callback = _stream_callback
+    if input_provider == "wasapi":
+        if pyaudio_loopback is None:
+            raise RuntimeError("内置 WASAPI loopback 运行时不可用；请重装 service.vc 组件")
+        pa = pyaudio_loopback.PyAudio()
+        try:
+            default_info = pa.get_default_wasapi_loopback()
+            loopback_index = int(raw_input.split(":")[-1]) if ":" in raw_input and raw_input.split(":")[-1].isdigit() else int(default_info["index"])
+            info = pa.get_device_info_by_index(loopback_index)
+            channels = max(1, min(2, int(info.get("maxInputChannels", 2))))
+            device_sr = 48000
+            samplerate = device_sr
+            if engine is not None:
+                import torch
+                import torchaudio.transforms as tat
+                in_resampler = tat.Resample(orig_freq=device_sr, new_freq=engine.sr, dtype=torch.float32)
+                out_resampler = tat.Resample(orig_freq=engine.sr, new_freq=device_sr, dtype=torch.float32)
+                capture_frames = int(round(engine.block_frame * device_sr / engine.sr))
+            else:
+                in_resampler = None
+                out_resampler = None
+                capture_frames = 4800
+            capture_frames = max(512, capture_frames)
+            frames_queue = queue.Queue(maxsize=8)
+
+            def consume_loopback(in_data):
+                try:
+                    raw = np.frombuffer(in_data, dtype=np.int16)
+                    if channels > 1:
+                        raw = raw.reshape(-1, channels).mean(axis=1)
+                    mono = raw.astype(np.float32) / 32768.0
+                    current = ENGINE_HOLDER.get("engine")
+                    if current is not None:
+                        res = in_resampler(torch.from_numpy(mono.copy())).numpy()
+                        if res.shape[0] < current.block_frame:
+                            res = np.pad(res, (0, current.block_frame - res.shape[0]))
+                        if res.shape[0] > current.block_frame:
+                            res = res[-current.block_frame:]
+                        tmp = np.zeros((current.block_frame, 1), dtype="float32")
+                        current.callback(res.reshape(-1, 1), tmp, current.block_frame, None, None)
+                        data = out_resampler(torch.from_numpy(tmp[:, 0].copy())).numpy().reshape(-1, 1)
+                    else:
+                        data = mono.reshape(-1, 1)
+                    try:
+                        frames_queue.put_nowait(data)
+                    except queue.Full:
+                        try: frames_queue.get_nowait()
+                        except queue.Empty: pass
+                        try: frames_queue.put_nowait(data)
+                        except queue.Full: pass
+                except Exception as exc:
+                    with STATE_LOCK:
+                        STATE["last_error"] = str(exc)
+
+            def loopback_output_cb(outdata, frame_count, time_info, out_status):
+                try:
+                    data = frames_queue.get_nowait()
+                except queue.Empty:
+                    outdata.fill(0)
+                else:
+                    if data.shape[0] < frame_count:
+                        data = np.pad(data, ((0, frame_count - data.shape[0]), (0, 0)))
+                    outdata[:] = data[:frame_count]
+                with STATE_LOCK:
+                    STATE["frames"] += int(frame_count)
+
+            pa_stream = pa.open(
+                format=pyaudio_loopback.paInt16,
+                channels=channels,
+                rate=device_sr,
+                input=True,
+                input_device_index=loopback_index,
+                frames_per_buffer=capture_frames,
+                start=False,
+            )
+            output_stream = sd.OutputStream(
+                device=output_device,
+                samplerate=device_sr,
+                channels=1,
+                dtype="float32",
+                blocksize=max(256, int(round(0.05 * device_sr))),
+                callback=loopback_output_cb,
+            )
+            stream = LoopbackStream(pa, pa_stream, output_stream, consume_loopback, capture_frames)
+            try:
+                stream.start()
+            except Exception:
+                stream.close()
+                raise
+            with STATE_LOCK:
+                STREAM = stream
+                RVC_ENGINE = engine
+                ENGINE_HOLDER["engine"] = engine
+                STATE.update({
+                    "running": True,
+                    "mode": "rvc" if engine is not None else "passthrough",
+                    "input_device": raw_input,
+                    "output_device": output_device,
+                    "samplerate": device_sr,
+                    "started_at": time.time(),
+                    "last_error": (engine.last_error or engine.index_warning) if engine is not None else "",
+                    "voice": params.get("voice"),
+                    "index": params.get("index_path"),
+                    "pitch": int(params.get("pitch") or 0),
+                    "index_rate": float(params.get("index_rate") or 0),
+                })
+            return status_payload()
+        except Exception:
+            try: pa.terminate()
+            except Exception: pass
+            raise
+
     # WDM-KS inputs (notably Stereo Mix) often cannot be paired with a
     # different-host duplex stream. Use independent input/output streams for
     # loopback devices; the microphone path keeps the lower-latency duplex.
@@ -536,6 +740,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"ok": False, "error": {"code": "VC_ERROR", "message": str(exc)}})
 
     def do_POST(self):
+        global RVC_ENGINE
         path = urlparse(self.path).path
         try:
             body = self._body()
@@ -564,8 +769,9 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     with STATE_LOCK:
                         current_sr = STATE.get("samplerate")
-                    if current_sr and int(current_sr) == int(new_engine.sr):
-                        global RVC_ENGINE
+                        current_engine = RVC_ENGINE
+                    engine_sr = int(current_engine.sr) if current_engine is not None else int(current_sr or 0)
+                    if engine_sr and engine_sr == int(new_engine.sr):
                         ENGINE_HOLDER["engine"] = new_engine
                         with STATE_LOCK:
                             RVC_ENGINE = new_engine
