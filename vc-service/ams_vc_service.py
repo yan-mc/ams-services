@@ -200,6 +200,8 @@ STATE_LOCK = threading.Lock()
 STREAM = None
 RVC_ENGINE = None
 ENGINE_HOLDER = {"engine": None}
+MONITOR_STREAM = None
+MONITOR_QUEUE = None
 STATE = {
     "running": False,
     "mode": "idle",
@@ -246,6 +248,64 @@ def list_devices() -> dict:
             })
     cable_in = [x for x in outputs if x["kind"] == "virtual"]
     cable_out = [x for x in inputs if x["kind"] == "loopback"]
+    # Hide host-API duplicates (MME/DirectSound/WASAPI/WDM-KS) from the main
+    # output picker. Prefer WASAPI for each endpoint, and give the user a
+    # readable default/virtual label instead of ten near-identical names.
+    priority = {"Windows WASAPI": 0, "Windows DirectSound": 1, "MME": 2, "Windows WDM-KS": 3}
+    default_output_index = int(sd.default.device[1])
+    default_output_name = str(sd.query_devices(default_output_index).get("name", ""))
+    groups = {}
+    for item in outputs:
+        groups.setdefault(item["name"], []).append(item)
+    output_choices = []
+    hidden_names = ("Microsoft 声音映射器", "Microsoft Sound Mapper", "主声音驱动程序", "Primary Sound Driver")
+    virtual_items = []
+    for name, items in groups.items():
+        if any(token in name for token in hidden_names):
+            continue
+        items = sorted(items, key=lambda x: (priority.get(x.get("hostapi_name", ""), 9), int(x["index"])))
+        best = items[0]
+        is_virtual = bool(best.get("kind") == "virtual")
+        if is_virtual:
+            virtual_items.extend(items)
+            continue
+        is_default = name == default_output_name
+        if is_default:
+            display = "默认输出（当前耳机/扬声器） · " + name
+        elif "耳机" in name or "Headphone" in name:
+            display = "耳机 · " + name
+        else:
+            display = name
+        output_choices.append({
+            "index": int(best["index"]),
+            "name": name,
+            "display_name": display,
+            "hostapi": best.get("hostapi_name", ""),
+            "is_default": is_default,
+            "is_virtual": False,
+            "alt_indices": [int(x["index"]) for x in items[1:]],
+        })
+    if virtual_items:
+        deduped = []
+        seen_virtual = set()
+        for item in virtual_items:
+            idx = int(item["index"])
+            if idx in seen_virtual:
+                continue
+            seen_virtual.add(idx)
+            deduped.append(item)
+        virtual_items = sorted(deduped, key=lambda x: (priority.get(x.get("hostapi_name", ""), 9), int(x["index"])))
+        best = virtual_items[0]
+        output_choices.insert(0, {
+            "index": int(best["index"]),
+            "name": best["name"],
+            "display_name": "VB-Cable 虚拟输出（给 OBS/会议）",
+            "hostapi": best.get("hostapi_name", ""),
+            "is_default": False,
+            "is_virtual": True,
+            "alt_indices": [int(x["index"]) for x in virtual_items[1:]],
+        })
+    output_choices.sort(key=lambda x: (0 if x["is_virtual"] else 1, 0 if x["is_default"] else 1, x["name"]))
     wasapi_loopbacks = []
     if pyaudio_loopback is not None:
         try:
@@ -271,6 +331,8 @@ def list_devices() -> dict:
         "inputs": inputs,
         "outputs": outputs,
         "virtual_outputs": cable_in,
+        "output_choices": output_choices,
+        "default_output_name": default_output_name,
         "loopback_inputs": cable_out,
         "wasapi_loopbacks": wasapi_loopbacks,
         "has_wasapi_loopback": bool(wasapi_loopbacks),
@@ -390,11 +452,54 @@ class SplitStream:
         except Exception: pass
 
 
+def _push_monitor(data) -> None:
+    sink = MONITOR_QUEUE
+    if sink is None:
+        return
+    try:
+        sink.put_nowait(np.array(data, copy=True))
+    except queue.Full:
+        try: sink.get_nowait()
+        except queue.Empty: pass
+        try: sink.put_nowait(np.array(data, copy=True))
+        except queue.Full: pass
+
+
+def _monitor_callback(outdata, frames, time_info, status):
+    sink = MONITOR_QUEUE
+    if sink is None:
+        outdata.fill(0)
+        return
+    try:
+        data = sink.get_nowait()
+    except queue.Empty:
+        outdata.fill(0)
+        return
+    if data.shape[0] < frames:
+        data = np.pad(data, ((0, frames - data.shape[0]), (0, 0)))
+    outdata[:] = data[:frames]
+
+
+def _start_monitor_stream(device_index, samplerate: int):
+    global MONITOR_STREAM, MONITOR_QUEUE
+    if device_index is None:
+        return
+    MONITOR_QUEUE = queue.Queue(maxsize=8)
+    stream = sd.OutputStream(
+        device=int(device_index), samplerate=int(samplerate), channels=1,
+        dtype="float32", blocksize=max(256, int(round(0.05 * samplerate))),
+        callback=_monitor_callback,
+    )
+    stream.start()
+    MONITOR_STREAM = stream
+
+
 def _stream_callback(indata, outdata, frames, time_info, status):
     if status:
         with STATE_LOCK:
             STATE["overflows"] += 1
     outdata[:] = indata
+    _push_monitor(outdata)
     with STATE_LOCK:
         STATE["frames"] += int(frames)
 
@@ -413,6 +518,12 @@ def start_session(params: dict) -> dict:
         input_device = _pick_device("input", params.get("input_device"), params.get("input_name") or "USB Audio")
         output_device = _pick_device("output", params.get("output_device"), params.get("output_name") or "VSpk")
         input_device, output_device = _match_hostapi(input_device, output_device)
+    monitor_index = None
+    monitor_raw = str(params.get("monitor_device") or "").strip()
+    if monitor_raw:
+        monitor_index = _pick_device("output", monitor_raw, "VSpk")
+        if int(monitor_index) == int(output_device):
+            monitor_index = None
     mode = str(params.get("mode") or "passthrough").lower()
     engine = None
     if mode == "rvc":
@@ -438,6 +549,7 @@ def start_session(params: dict) -> dict:
                 outdata.fill(0)
                 return
             current.callback(indata, outdata, frames, time_info, status)
+            _push_monitor(outdata)
     else:
         samplerate = int(params.get("samplerate") or sd.query_devices(output_device)["default_samplerate"] or 48000)
         if samplerate <= 0:
@@ -506,6 +618,7 @@ def start_session(params: dict) -> dict:
                     if data.shape[0] < frame_count:
                         data = np.pad(data, ((0, frame_count - data.shape[0]), (0, 0)))
                     outdata[:] = data[:frame_count]
+                _push_monitor(outdata)
                 with STATE_LOCK:
                     STATE["frames"] += int(frame_count)
 
@@ -529,6 +642,8 @@ def start_session(params: dict) -> dict:
             stream = LoopbackStream(pa, pa_stream, output_stream, consume_loopback, capture_frames)
             try:
                 stream.start()
+                if monitor_index is not None:
+                    _start_monitor_stream(monitor_index, device_sr)
             except Exception:
                 stream.close()
                 raise
@@ -543,6 +658,7 @@ def start_session(params: dict) -> dict:
                     "output_device": output_device,
                     "samplerate": device_sr,
                     "started_at": time.time(),
+                    "monitor_device": monitor_index,
                     "last_error": (engine.last_error or engine.index_warning) if engine is not None else "",
                     "voice": params.get("voice"),
                     "index": params.get("index_path"),
@@ -612,6 +728,7 @@ def start_session(params: dict) -> dict:
                 if data.shape[0] < frames:
                     data = np.pad(data, ((0, frames - data.shape[0]), (0, 0)))
                 outdata[:] = data[:frames]
+            _push_monitor(outdata)
             with STATE_LOCK:
                 STATE["frames"] += int(frames)
 
@@ -651,6 +768,15 @@ def start_session(params: dict) -> dict:
                 stream.start()
             except Exception:
                 raise
+    if monitor_index is not None:
+        try:
+            _start_monitor_stream(monitor_index, samplerate)
+        except Exception:
+            try: stream.stop()
+            except Exception: pass
+            try: stream.close()
+            except Exception: pass
+            raise
     with STATE_LOCK:
         STREAM = stream
         RVC_ENGINE = engine
@@ -662,6 +788,7 @@ def start_session(params: dict) -> dict:
             "output_device": output_device,
             "samplerate": samplerate,
             "started_at": time.time(),
+            "monitor_device": monitor_index,
             "last_error": (engine.last_error or engine.index_warning) if engine is not None else "",
             "voice": params.get("voice"),
             "index": params.get("index_path"),
@@ -672,12 +799,15 @@ def start_session(params: dict) -> dict:
 
 
 def stop_session() -> dict:
-    global STREAM, RVC_ENGINE
+    global STREAM, RVC_ENGINE, MONITOR_STREAM, MONITOR_QUEUE
     with STATE_LOCK:
         stream = STREAM
         STREAM = None
         RVC_ENGINE = None
         ENGINE_HOLDER["engine"] = None
+        monitor = MONITOR_STREAM
+        MONITOR_STREAM = None
+        MONITOR_QUEUE = None
         STATE["running"] = False
         STATE["mode"] = "idle"
         STATE["started_at"] = None
@@ -685,6 +815,13 @@ def stop_session() -> dict:
         try:
             stream.stop()
             stream.close()
+        except Exception as exc:
+            with STATE_LOCK:
+                STATE["last_error"] = str(exc)
+    if monitor is not None:
+        try:
+            monitor.stop()
+            monitor.close()
         except Exception as exc:
             with STATE_LOCK:
                 STATE["last_error"] = str(exc)
