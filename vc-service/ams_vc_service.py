@@ -306,6 +306,31 @@ def list_devices() -> dict:
             "alt_indices": [int(x["index"]) for x in virtual_items[1:]],
         })
     output_choices.sort(key=lambda x: (0 if x["is_virtual"] else 1, 0 if x["is_default"] else 1, x["name"]))
+    # Keep the main picker intentionally short: VB-Cable plus the current
+    # default headphone/speaker. Advance users can still use alt_indices via API.
+    output_choices = [x for x in output_choices if x["is_virtual"] or x["is_default"]]
+    default_input_index = int(sd.default.device[0])
+    default_input_name = str(sd.query_devices(default_input_index).get("name", ""))
+    input_choices = []
+    seen_input_names = set()
+    for item in inputs:
+        if item.get("hostapi_name") != "Windows WASAPI":
+            continue
+        if int(item.get("channels", 0)) <= 0 or float(item.get("samplerate", 0)) < 48000:
+            continue
+        name = item["name"]
+        if any(token in name for token in ("VMic", "CABLE-A Output", "CABLE Output")):
+            continue
+        if name in seen_input_names:
+            continue
+        seen_input_names.add(name)
+        is_default = name == default_input_name
+        display = "默认麦克风（当前设备） · " + name if is_default else "麦克风 · " + name
+        input_choices.append({
+            "index": int(item["index"]), "name": name, "display_name": display,
+            "hostapi": item.get("hostapi_name", ""), "is_default": is_default,
+        })
+    input_choices.sort(key=lambda x: (0 if x["is_default"] else 1, x["name"]))
     wasapi_loopbacks = []
     if pyaudio_loopback is not None:
         try:
@@ -332,6 +357,8 @@ def list_devices() -> dict:
         "outputs": outputs,
         "virtual_outputs": cable_in,
         "output_choices": output_choices,
+        "input_choices": input_choices,
+        "default_input_name": default_input_name,
         "default_output_name": default_output_name,
         "loopback_inputs": cable_out,
         "wasapi_loopbacks": wasapi_loopbacks,
@@ -675,7 +702,7 @@ def start_session(params: dict) -> dict:
     # different-host duplex stream. Use independent input/output streams for
     # loopback devices; the microphone path keeps the lower-latency duplex.
     input_name = str(sd.query_devices(input_device).get("name", ""))
-    is_loopback = any(token in input_name for token in ("立体声混音", "Stereo Mix", "CABLE-A Output", "CABLE Output", "VMic"))
+    is_loopback = engine is not None or any(token in input_name for token in ("立体声混音", "Stereo Mix", "CABLE-A Output", "CABLE Output", "VMic"))
     if is_loopback:
         frames_queue = queue.Queue(maxsize=8)
         in_resampler = None
@@ -687,7 +714,7 @@ def start_session(params: dict) -> dict:
             import torchaudio.transforms as tat
             device_sr = 48000
             samplerate = device_sr
-            blocksize = int(round(0.25 * device_sr))
+            blocksize = max(256, int(round(engine.block_time * device_sr)))
             in_resampler = tat.Resample(orig_freq=device_sr, new_freq=engine.sr, dtype=torch.float32)
             out_resampler = tat.Resample(orig_freq=engine.sr, new_freq=device_sr, dtype=torch.float32)
 
