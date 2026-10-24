@@ -513,6 +513,44 @@ class LoopbackStream:
         except Exception: pass
 
 
+class MixedStream:
+    """Sounddevice microphone + bundled WASAPI loopback mixer."""
+    def __init__(self, pa, loopback_stream, mic_stream, output_stream, worker, stop_event):
+        self.pa = pa
+        self.loopback_stream = loopback_stream
+        self.mic_stream = mic_stream
+        self.output_stream = output_stream
+        self.worker = worker
+        self.stop_event = stop_event
+
+    def start(self):
+        self.output_stream.start()
+        self.mic_stream.start()
+        self.loopback_stream.start_stream()
+        self.worker.start()
+
+    def stop(self):
+        self.stop_event.set()
+        try: self.mic_stream.stop()
+        except Exception: pass
+        try: self.loopback_stream.stop_stream()
+        except Exception: pass
+        try: self.output_stream.stop()
+        except Exception: pass
+        if self.worker is not None:
+            self.worker.join(timeout=1.0)
+
+    def close(self):
+        try: self.mic_stream.close()
+        except Exception: pass
+        try: self.loopback_stream.close()
+        except Exception: pass
+        try: self.output_stream.close()
+        except Exception: pass
+        try: self.pa.terminate()
+        except Exception: pass
+
+
 class SplitStream:
     def __init__(self, input_stream, output_stream):
         self.input_stream = input_stream
@@ -744,6 +782,148 @@ def start_session(params: dict) -> dict:
                     "samplerate": device_sr,
                     "started_at": time.time(),
                     "monitor_device": monitor_index,
+                    "last_error": (engine.last_error or engine.index_warning) if engine is not None else "",
+                    "voice": params.get("voice"),
+                    "index": params.get("index_path"),
+                    "pitch": int(params.get("pitch") or 0),
+                    "index_rate": float(params.get("index_rate") or 0),
+                })
+            return status_payload()
+        except Exception:
+            try: pa.terminate()
+            except Exception: pass
+            raise
+
+    mix_raw = str(params.get("mix_loopback") or "").strip()
+    if mix_raw and input_provider != "wasapi":
+        if pyaudio_loopback is None:
+            raise RuntimeError("混音需要内置 WASAPI loopback 运行时")
+        pa = pyaudio_loopback.PyAudio()
+        try:
+            default_info = pa.get_default_wasapi_loopback()
+            loopback_index = int(mix_raw.split(":")[-1]) if ":" in mix_raw and mix_raw.split(":")[-1].isdigit() else int(default_info["index"])
+            info = pa.get_device_info_by_index(loopback_index)
+            channels = max(1, min(2, int(info.get("maxInputChannels", 2))))
+            device_sr = 48000
+            samplerate = device_sr
+            if engine is not None:
+                import torch
+                import torchaudio.transforms as tat
+                in_resampler = tat.Resample(orig_freq=device_sr, new_freq=engine.sr, dtype=torch.float32)
+                out_resampler = tat.Resample(orig_freq=engine.sr, new_freq=device_sr, dtype=torch.float32)
+                capture_frames = max(256, int(round(engine.block_frame * device_sr / engine.sr)))
+            else:
+                in_resampler = None
+                out_resampler = None
+                capture_frames = 4800
+            gain = float(params.get("mix_gain") if params.get("mix_gain") is not None else 0.8)
+            mix_queue = queue.Queue(maxsize=8)
+            frames_queue = queue.Queue(maxsize=8)
+
+            def mic_cb(indata, frame_count, time_info, cb_status):
+                try:
+                    mono = np.asarray(indata, dtype=np.float32)
+                    if mono.ndim > 1: mono = mono[:, 0]
+                    try:
+                        sys_audio = mix_queue.get_nowait()
+                    except queue.Empty:
+                        sys_audio = np.zeros_like(mono)
+                    if sys_audio.shape[0] < mono.shape[0]:
+                        sys_audio = np.pad(sys_audio, (0, mono.shape[0] - sys_audio.shape[0]))
+                    if sys_audio.shape[0] > mono.shape[0]:
+                        sys_audio = sys_audio[-mono.shape[0]:]
+                    mixed = np.clip(mono + sys_audio * gain, -1.0, 1.0)
+                    current = ENGINE_HOLDER.get("engine")
+                    if current is not None:
+                        res = in_resampler(torch.from_numpy(mixed.copy())).numpy()
+                        if res.shape[0] < current.block_frame:
+                            res = np.pad(res, (0, current.block_frame - res.shape[0]))
+                        if res.shape[0] > current.block_frame:
+                            res = res[-current.block_frame:]
+                        tmp = np.zeros((current.block_frame, 1), dtype="float32")
+                        current.callback(res.reshape(-1, 1), tmp, current.block_frame, time_info, cb_status)
+                        data = out_resampler(torch.from_numpy(tmp[:, 0].copy())).numpy().reshape(-1, 1)
+                    else:
+                        data = mixed.reshape(-1, 1)
+                    try:
+                        frames_queue.put_nowait(data)
+                    except queue.Full:
+                        try: frames_queue.get_nowait()
+                        except queue.Empty: pass
+                        try: frames_queue.put_nowait(data)
+                        except queue.Full: pass
+                except Exception as exc:
+                    with STATE_LOCK:
+                        STATE["last_error"] = str(exc)
+
+            def output_cb(outdata, frame_count, time_info, out_status):
+                try:
+                    data = frames_queue.get_nowait()
+                except queue.Empty:
+                    outdata.fill(0)
+                else:
+                    if data.shape[0] < frame_count:
+                        data = np.pad(data, ((0, frame_count - data.shape[0]), (0, 0)))
+                    outdata[:] = data[:frame_count]
+                _push_monitor(outdata)
+                with STATE_LOCK:
+                    STATE["frames"] += int(frame_count)
+
+            pa_stream = pa.open(
+                format=pyaudio_loopback.paInt16, channels=channels, rate=device_sr,
+                input=True, input_device_index=loopback_index,
+                frames_per_buffer=capture_frames, start=False,
+            )
+            mic_stream = sd.InputStream(device=input_device, samplerate=device_sr, channels=1, dtype="float32", blocksize=capture_frames, callback=mic_cb)
+            output_stream = sd.OutputStream(device=output_device, samplerate=device_sr, channels=1, dtype="float32", blocksize=capture_frames, callback=output_cb)
+            stop_event = threading.Event()
+
+            def system_worker():
+                while not stop_event.is_set():
+                    try:
+                        raw = pa_stream.read(capture_frames, exception_on_overflow=False)
+                    except Exception as exc:
+                        with STATE_LOCK:
+                            STATE["last_error"] = str(exc)
+                        break
+                    try:
+                        samples = np.frombuffer(raw, dtype=np.int16)
+                        if channels > 1:
+                            samples = samples.reshape(-1, channels).mean(axis=1)
+                        mono = samples.astype(np.float32) / 32768.0
+                        try:
+                            mix_queue.put_nowait(mono)
+                        except queue.Full:
+                            try: mix_queue.get_nowait()
+                            except queue.Empty: pass
+                            try: mix_queue.put_nowait(mono)
+                            except queue.Full: pass
+                    except Exception as exc:
+                        with STATE_LOCK:
+                            STATE["last_error"] = str(exc)
+
+            worker = threading.Thread(target=system_worker, daemon=True)
+            stream = MixedStream(pa, pa_stream, mic_stream, output_stream, worker, stop_event)
+            try:
+                stream.start()
+                if monitor_index is not None:
+                    _start_monitor_stream(monitor_index, device_sr)
+            except Exception:
+                stream.close()
+                raise
+            with STATE_LOCK:
+                STREAM = stream
+                RVC_ENGINE = engine
+                ENGINE_HOLDER["engine"] = engine
+                STATE.update({
+                    "running": True,
+                    "mode": "rvc" if engine is not None else "passthrough",
+                    "input_device": input_device,
+                    "output_device": output_device,
+                    "samplerate": device_sr,
+                    "started_at": time.time(),
+                    "monitor_device": monitor_index,
+                    "mix_loopback": mix_raw,
                     "last_error": (engine.last_error or engine.index_warning) if engine is not None else "",
                     "voice": params.get("voice"),
                     "index": params.get("index_path"),
