@@ -9,6 +9,8 @@ from .msvc import MsvcConvertRunner
 from .pymss import PymssSeparateRunner
 from .rvc import RvcConvertRunner
 from .tts import TtsSynthesizeRunner
+from .train import RvcTrainRunner
+from .dataset import DatasetPrepareRunner
 
 BACKEND_JOB_TYPES = (
     {
@@ -27,9 +29,19 @@ BACKEND_JOB_TYPES = (
         "description": "pymss 分离（pymss 独立环境 + scripts/pymss_separate.py）",
     },
     {
+        "type": "train.rvc",
+        "gpu": True,
+        "description": "RVC 音源炼制（数据集 → pth + index → 注册音色）",
+    },
+    {
         "type": "tts.synthesize",
         "gpu": False,
         "description": "Piper 离线语音合成（runtime.tts）",
+    },
+    {
+        "type": "dataset.prepare",
+        "gpu": False,
+        "description": "数据集导入/切片/校验",
     },
 )
 
@@ -63,6 +75,18 @@ def register_backend_runners(
         "tts.synthesize",
         lambda: TtsSynthesizeRunner(),
         gpu=False,
+        description=BACKEND_JOB_TYPES[4]["description"],
+    )
+    registry.register(
+        "train.rvc",
+        lambda: RvcTrainRunner(),
+        gpu=True,
         description=BACKEND_JOB_TYPES[3]["description"],
+    )
+    registry.register(
+        "dataset.prepare",
+        lambda: DatasetPrepareRunner(),
+        gpu=False,
+        description=BACKEND_JOB_TYPES[5]["description"],
     )
     return registry
