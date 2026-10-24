@@ -68,7 +68,7 @@ import sounddevice as sd
 class RvcEngine:
     """Small headless real-time RVC callback adapted from the RVC GUI buffer flow."""
 
-    def __init__(self, voice: str, index_path: str | None, pitch: int, index_rate: float, f0method: str = "rmvpe"):
+    def __init__(self, voice: str, index_path: str | None, pitch: int, index_rate: float, f0method: str = "rmvpe", block_time: float = 0.1, extra_time: float = 0.25):
         root = os.environ.get("AMS_RVC_ROOT", "").strip()
         if root:
             os.chdir(root)
@@ -109,13 +109,13 @@ class RvcEngine:
             raise RuntimeError("RVC model load failed; check pth/index and runtime log")
         self.sr = int(self.rvc.tgt_sr)
         self.zc = self.sr // 100
-        self.block_time = 0.25
+        self.block_time = max(0.03, min(0.5, float(block_time)))
         self.block_frame = int(round(self.block_time * self.sr / self.zc)) * self.zc
         self.block_frame_16k = 160 * self.block_frame // self.zc
         self.crossfade_frame = int(round(0.05 * self.sr / self.zc)) * self.zc
         self.sola_buffer_frame = min(self.crossfade_frame, 4 * self.zc)
         self.sola_search_frame = self.zc
-        self.extra_frame = int(round(1.0 * self.sr / self.zc)) * self.zc
+        self.extra_frame = int(round(max(0.05, min(2.5, float(extra_time))) * self.sr / self.zc)) * self.zc
         self.input_wav = torch.zeros(
             self.extra_frame + self.crossfade_frame + self.sola_search_frame + self.block_frame,
             device=self.config.device, dtype=torch.float32,
@@ -132,12 +132,16 @@ class RvcEngine:
         self.return_length = (self.block_frame + self.sola_buffer_frame + self.sola_search_frame) // self.zc
         self.frames = 0
         self.last_error = ""
+        self.infer_ms = 0.0
+        self.max_infer_ms = 0.0
+        self.callback_ms = 0.0
         self._librosa = librosa
         self._torch = torch
         self._f0method = f0method
 
     def callback(self, indata, outdata, frames, time_info, status):
         torch = self._torch
+        callback_started = time.perf_counter()
         try:
             mono = np.asarray(indata)
             if mono.ndim > 1:
@@ -153,10 +157,13 @@ class RvcEngine:
             res = self.resampler(self.input_wav[-self.block_frame - 2 * self.zc:])
             n = min(res.shape[0], self.input_wav_res.shape[0])
             self.input_wav_res[-n:] = res[-n:]
+            infer_started = time.perf_counter()
             infer = self.rvc.infer(
                 self.input_wav_res, self.block_frame_16k, self.skip_head,
                 self.return_length, self._f0method,
             )
+            self.infer_ms = round((time.perf_counter() - infer_started) * 1000.0, 2)
+            self.max_infer_ms = max(self.max_infer_ms, self.infer_ms)
             conv_input = infer[None, None, :self.sola_buffer_frame + self.sola_search_frame]
             cor_nom = torch.nn.functional.conv1d(conv_input, self.sola_buffer[None, None, :])
             cor_den = torch.sqrt(torch.nn.functional.conv1d(conv_input ** 2, torch.ones(1, 1, self.sola_buffer_frame, device=self.config.device)) + 1e-8)
@@ -170,6 +177,7 @@ class RvcEngine:
                 out = torch.cat([out, torch.zeros(frames - out.shape[0], device=self.config.device)])
             outdata[:] = out[:frames].unsqueeze(1).cpu().numpy()
             self.frames += int(frames)
+            self.callback_ms = round((time.perf_counter() - callback_started) * 1000.0, 2)
             with STATE_LOCK:
                 STATE["frames"] += int(frames)
         except Exception as exc:
@@ -181,6 +189,7 @@ class RvcEngine:
 STATE_LOCK = threading.Lock()
 STREAM = None
 RVC_ENGINE = None
+ENGINE_HOLDER = {"engine": None}
 STATE = {
     "running": False,
     "mode": "idle",
@@ -323,10 +332,19 @@ def start_session(params: dict) -> dict:
             int(params.get("pitch") or 0),
             float(params.get("index_rate") or 0),
             str(params.get("f0method") or "rmvpe"),
+            float(params.get("block_time") or 0.1),
+            float(params.get("extra_time") or 0.25),
         )
         samplerate = int(engine.sr)
         blocksize = int(engine.block_frame)
-        callback = engine.callback
+        ENGINE_HOLDER["engine"] = engine
+
+        def callback(indata, outdata, frames, time_info, status):
+            current = ENGINE_HOLDER.get("engine")
+            if current is None:
+                outdata.fill(0)
+                return
+            current.callback(indata, outdata, frames, time_info, status)
     else:
         samplerate = int(params.get("samplerate") or sd.query_devices(output_device)["default_samplerate"] or 48000)
         if samplerate <= 0:
@@ -355,16 +373,17 @@ def start_session(params: dict) -> dict:
 
         def input_cb(indata, frames, time_info, status):
             try:
-                if engine is not None:
+                current = ENGINE_HOLDER.get("engine")
+                if current is not None:
                     mono = np.asarray(indata, dtype=np.float32)
                     if mono.ndim > 1: mono = mono[:, 0]
                     res = in_resampler(torch.from_numpy(mono.copy())).numpy()
-                    if res.shape[0] < engine.block_frame:
-                        res = np.pad(res, (0, engine.block_frame - res.shape[0]))
-                    if res.shape[0] > engine.block_frame:
-                        res = res[-engine.block_frame:]
-                    tmp = np.zeros((engine.block_frame, 1), dtype="float32")
-                    engine.callback(res.reshape(-1, 1), tmp, engine.block_frame, time_info, status)
+                    if res.shape[0] < current.block_frame:
+                        res = np.pad(res, (0, current.block_frame - res.shape[0]))
+                    if res.shape[0] > current.block_frame:
+                        res = res[-current.block_frame:]
+                    tmp = np.zeros((current.block_frame, 1), dtype="float32")
+                    current.callback(res.reshape(-1, 1), tmp, current.block_frame, time_info, status)
                     out = out_resampler(torch.from_numpy(tmp[:, 0].copy())).numpy()
                     data = out.reshape(-1, 1)
                 else:
@@ -431,6 +450,7 @@ def start_session(params: dict) -> dict:
     with STATE_LOCK:
         STREAM = stream
         RVC_ENGINE = engine
+        ENGINE_HOLDER["engine"] = engine
         STATE.update({
             "running": True,
             "mode": "rvc" if engine is not None else "passthrough",
@@ -453,6 +473,7 @@ def stop_session() -> dict:
         stream = STREAM
         STREAM = None
         RVC_ENGINE = None
+        ENGINE_HOLDER["engine"] = None
         STATE["running"] = False
         STATE["mode"] = "idle"
         STATE["started_at"] = None
@@ -469,7 +490,17 @@ def stop_session() -> dict:
 def status_payload() -> dict:
     with STATE_LOCK:
         data = dict(STATE)
+        engine = RVC_ENGINE
     data["devices"] = "call /vc/devices"
+    if engine is not None:
+        data["stats"] = {
+            "infer_ms": engine.infer_ms,
+            "max_infer_ms": engine.max_infer_ms,
+            "callback_ms": engine.callback_ms,
+            "block_ms": round(engine.block_frame / engine.sr * 1000.0, 1),
+            "buffer_ms": round((engine.extra_frame + engine.crossfade_frame) / engine.sr * 1000.0, 1),
+            "estimated_latency_ms": round((engine.extra_frame + engine.crossfade_frame + engine.block_frame) / engine.sr * 1000.0 + engine.infer_ms, 1),
+        }
     return {"ok": True, "data": data}
 
 
@@ -522,8 +553,31 @@ class Handler(BaseHTTPRequestHandler):
                     params["input_device"] = input_device
                     params["output_device"] = output_device
                     params["mode"] = "rvc"
-                    stop_session()
-                    self._send(200, start_session(params))
+                    new_engine = RvcEngine(
+                        str(params.get("voice") or "").strip(),
+                        str(params.get("index_path") or "") or None,
+                        int(params.get("pitch") or 0),
+                        float(params.get("index_rate") or 0),
+                        str(params.get("f0method") or "rmvpe"),
+                        float(params.get("block_time") or 0.1),
+                        float(params.get("extra_time") or 0.25),
+                    )
+                    with STATE_LOCK:
+                        current_sr = STATE.get("samplerate")
+                    if current_sr and int(current_sr) == int(new_engine.sr):
+                        global RVC_ENGINE
+                        ENGINE_HOLDER["engine"] = new_engine
+                        with STATE_LOCK:
+                            RVC_ENGINE = new_engine
+                            STATE["voice"] = params.get("voice")
+                            STATE["index"] = params.get("index_path")
+                            STATE["pitch"] = int(params.get("pitch") or 0)
+                            STATE["index_rate"] = float(params.get("index_rate") or 0)
+                            STATE["last_error"] = new_engine.last_error or new_engine.index_warning
+                        self._send(200, status_payload())
+                    else:
+                        stop_session()
+                        self._send(200, start_session(params))
                 else:
                     with STATE_LOCK:
                         STATE["voice"] = body.get("voice")
