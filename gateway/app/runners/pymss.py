@@ -49,7 +49,31 @@ class PymssSeparateRunner(ProtocolProcessRunner):
             chunk = int(chunk_value)
             if chunk < 8000 or chunk > 2000000:
                 raise RunnerError("INVALID_PARAMS", "chunk 必须在 8000..2000000 采样点之间")
-        return {"input_path": str(input_path), "model": model, "device": device, "chunk": chunk}
+        overlap_value = params.get("overlap_size")
+        overlap_size = None if overlap_value is None else int(overlap_value)
+        if overlap_size is not None and not 0 <= overlap_size <= 2000000:
+            raise RunnerError("INVALID_PARAMS", "overlap_size 必须在 0..2000000 之间")
+        batch_value = params.get("stem_batch_size")
+        stem_batch_size = None if batch_value is None else int(batch_value)
+        if stem_batch_size is not None and not 0 <= stem_batch_size <= 32:
+            raise RunnerError("INVALID_PARAMS", "stem_batch_size 必须在 0..32 之间")
+        def _tri_state(key: str) -> str:
+            value = str(params.get(key) or "auto").lower()
+            if value not in {"auto", "true", "false", "on", "off"}:
+                raise RunnerError("INVALID_PARAMS", f"{key} 必须是 auto/true/false")
+            return "true" if value in {"true", "on"} else ("false" if value in {"false", "off"} else "auto")
+        normalize = _tri_state("normalize")
+        standardize = _tri_state("standardize")
+        stems_value = params.get("stems")
+        if isinstance(stems_value, list):
+            stems = [str(item).strip() for item in stems_value if str(item).strip()]
+        else:
+            stems = [item.strip() for item in str(stems_value or "").split(",") if item.strip()]
+        return {
+            "input_path": str(input_path), "model": model, "device": device, "chunk": chunk,
+            "overlap_size": overlap_size, "stem_batch_size": stem_batch_size,
+            "normalize": normalize, "standardize": standardize, "stems": stems,
+        }
 
     def build_command(
         self,
@@ -87,4 +111,12 @@ class PymssSeparateRunner(ProtocolProcessRunner):
         ]
         if params.get("chunk"):
             command.extend(["--chunk", str(params["chunk"])])
+        if params.get("overlap_size") is not None:
+            command.extend(["--overlap-size", str(params["overlap_size"])])
+        if params.get("stem_batch_size") is not None:
+            command.extend(["--stem-batch-size", str(params["stem_batch_size"])])
+        command.extend(["--normalize", params.get("normalize", "auto")])
+        command.extend(["--standardize", params.get("standardize", "auto")])
+        if params.get("stems"):
+            command.extend(["--stems", ",".join(params["stems"])])
         return command, ctx.work_dir, {"PYMSS_MODEL_DIR": str(model_dir)}

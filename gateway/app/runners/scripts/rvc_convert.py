@@ -48,7 +48,13 @@ def parse_args(argv):
     parser.add_argument("--output", required=True)
     parser.add_argument("--rvc-root", required=True)
     parser.add_argument("--f0-up-key", type=int, default=0)
+    parser.add_argument("--f0-method", default="rmvpe", choices=["pm", "harvest", "crepe", "rmvpe"])
     parser.add_argument("--index-rate", type=float, default=0.75)
+    parser.add_argument("--index-path", default="")
+    parser.add_argument("--filter-radius", type=int, default=3)
+    parser.add_argument("--resample-sr", type=int, default=0)
+    parser.add_argument("--rms-mix-rate", type=float, default=0.25)
+    parser.add_argument("--protect", type=float, default=0.33)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--is-half", action="store_true", default=True)
     return parser.parse_args(argv)
@@ -112,7 +118,9 @@ def main(argv=None):
 
         progress(2, "resolve", "解析音源/index")
         voice_path = resolve_voice(rvc_root, args.voice)
-        index_path = resolve_index(rvc_root, voice_path)
+        index_path = Path(args.index_path).expanduser() if args.index_path else resolve_index(rvc_root, voice_path)
+        if index_path is not None and not index_path.is_file():
+            raise FileNotFoundError("指定的 index 不存在：%s" % index_path)
         log("info", "音源：%s；index：%s" % (voice_path.name, index_path.name if index_path else "无"))
         if index_path is None:
             log("warning", "未找到 index：本次 index_rate 不生效（仍可换声，音色相似度略降）")
@@ -177,14 +185,14 @@ def main(argv=None):
             str(input_path),
             int(args.f0_up_key),
             None,
-            "rmvpe",
+            str(args.f0_method),
             str(index_path) if index_path else "",
             None,
             float(args.index_rate),
-            3,
-            0,
-            0.25,
-            0.33,
+            int(args.filter_radius),
+            int(args.resample_sr),
+            float(args.rms_mix_rate),
+            float(args.protect),
         )
         infer_sec = time.perf_counter() - started
         heartbeat.stop()
@@ -211,6 +219,11 @@ def main(argv=None):
             "index_used": bool(index_path),
             "f0_up_key": int(args.f0_up_key),
             "index_rate": float(args.index_rate),
+            "f0_method": str(args.f0_method),
+            "filter_radius": int(args.filter_radius),
+            "resample_sr": int(args.resample_sr),
+            "rms_mix_rate": float(args.rms_mix_rate),
+            "protect": float(args.protect),
             "device": str(config.device),
             "infer_sec": round(infer_sec, 3),
             "rtf": round(infer_sec / duration, 4) if duration else None,

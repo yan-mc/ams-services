@@ -42,6 +42,25 @@ class RvcConvertRunner(ProtocolProcessRunner):
         index_rate = float(params.get("index_rate", 0.75))
         if not 0.0 <= index_rate <= 1.0:
             raise RunnerError("INVALID_PARAMS", "index_rate 必须在 0..1 之间")
+        f0_method = str(params.get("f0_method") or "rmvpe").lower()
+        if f0_method not in {"pm", "harvest", "crepe", "rmvpe"}:
+            raise RunnerError("INVALID_PARAMS", f"不支持的 f0_method：{f0_method}")
+        filter_radius = int(params.get("filter_radius", 3))
+        if not 0 <= filter_radius <= 7:
+            raise RunnerError("INVALID_PARAMS", "filter_radius 必须在 0..7 之间")
+        resample_sr = int(params.get("resample_sr", 0))
+        if not 0 <= resample_sr <= 48000:
+            raise RunnerError("INVALID_PARAMS", "resample_sr 必须在 0..48000 之间")
+        rms_mix_rate = float(params.get("rms_mix_rate", 0.25))
+        if not 0.0 <= rms_mix_rate <= 1.0:
+            raise RunnerError("INVALID_PARAMS", "rms_mix_rate 必须在 0..1 之间")
+        protect = float(params.get("protect", 0.33))
+        if not 0.0 <= protect <= 0.5:
+            raise RunnerError("INVALID_PARAMS", "protect 必须在 0..0.5 之间")
+        index_value = str(params.get("index_path") or "").strip()
+        index_path = Path(index_value).expanduser() if index_value else None
+        if index_path is not None and not index_path.is_file():
+            raise RunnerError("INPUT_NOT_FOUND", f"index 不存在：{index_path}")
         device = str(params.get("device") or "cuda:0")
         if device not in {"cpu", "cuda", "cuda:0", "cuda:1", "mps"}:
             raise RunnerError(
@@ -53,7 +72,13 @@ class RvcConvertRunner(ProtocolProcessRunner):
             "input_path": str(input_path),
             "voice_name": voice_name,
             "f0_up_key": f0_up_key,
+            "f0_method": f0_method,
             "index_rate": index_rate,
+            "index_path": str(index_path) if index_path else "",
+            "filter_radius": filter_radius,
+            "resample_sr": resample_sr,
+            "rms_mix_rate": rms_mix_rate,
+            "protect": protect,
             "device": device,
         }
 
@@ -89,6 +114,18 @@ class RvcConvertRunner(ProtocolProcessRunner):
             str(params["f0_up_key"]),
             "--index-rate",
             str(params["index_rate"]),
+            "--f0-method",
+            params["f0_method"],
+            "--filter-radius",
+            str(params["filter_radius"]),
+            "--resample-sr",
+            str(params["resample_sr"]),
+            "--rms-mix-rate",
+            str(params["rms_mix_rate"]),
+            "--protect",
+            str(params["protect"]),
+            "--index-path",
+            params.get("index_path") or "",
             "--device",
             params["device"],
         ]

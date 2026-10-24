@@ -45,6 +45,11 @@ def parse_args(argv):
     parser.add_argument("--model", required=True)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--chunk", type=int, default=None)
+    parser.add_argument("--overlap-size", type=int, default=None)
+    parser.add_argument("--stem-batch-size", type=int, default=None)
+    parser.add_argument("--normalize", choices=["auto", "true", "false"], default="auto")
+    parser.add_argument("--standardize", choices=["auto", "true", "false"], default="auto")
+    parser.add_argument("--stems", default="")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-dir", required=True)
     return parser.parse_args(argv)
@@ -69,6 +74,15 @@ def main(argv=None):
         inference_params = {}
         if args.chunk:
             inference_params["chunk_size"] = int(args.chunk)
+        if args.overlap_size is not None:
+            inference_params["overlap_size"] = int(args.overlap_size)
+        if args.stem_batch_size is not None:
+            inference_params["stem_batch_size"] = int(args.stem_batch_size)
+        if args.normalize != "auto":
+            inference_params["normalize"] = args.normalize == "true"
+        if args.standardize != "auto":
+            inference_params["standardize"] = args.standardize == "true"
+        stems = [item.strip() for item in str(args.stems or "").split(",") if item.strip()] or None
 
         def on_progress(done, total, message):
             total = max(1, int(total or 1))
@@ -93,7 +107,7 @@ def main(argv=None):
         duration = float(mix.shape[-1]) / float(sample_rate) if getattr(mix, "size", 0) else 0.0
         log("info", "输入 %.2fs @ %dHz，开始分离（device=%s）" % (duration, sample_rate, separator.device))
 
-        results = separator.separate(mix, pbar=False)
+        results = separator.separate(mix, pbar=False, stems=stems)
         progress(92, "save", "写出 stems")
         base_name = input_path.stem
         artifacts = []
