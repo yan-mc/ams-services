@@ -470,11 +470,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, stop_session())
             elif path == "/vc/session/switch-voice":
                 with STATE_LOCK:
-                    STATE["voice"] = body.get("voice")
-                    STATE["index"] = body.get("index_path")
-                    STATE["pitch"] = int(body.get("pitch") or STATE["pitch"] or 0)
-                    STATE["index_rate"] = float(body.get("index_rate") or STATE["index_rate"] or 0)
-                self._send(200, status_payload())
+                    running = bool(STATE["running"])
+                    input_device = STATE["input_device"]
+                    output_device = STATE["output_device"]
+                if running:
+                    params = dict(body)
+                    params["input_device"] = input_device
+                    params["output_device"] = output_device
+                    params["mode"] = "rvc"
+                    stop_session()
+                    self._send(200, start_session(params))
+                else:
+                    with STATE_LOCK:
+                        STATE["voice"] = body.get("voice")
+                        STATE["index"] = body.get("index_path")
+                        STATE["pitch"] = int(body.get("pitch") or STATE["pitch"] or 0)
+                        STATE["index_rate"] = float(body.get("index_rate") or STATE["index_rate"] or 0)
+                    self._send(200, status_payload())
             else:
                 self._send(404, {"ok": False, "error": {"code": "NOT_FOUND", "message": path}})
         except Exception as exc:
