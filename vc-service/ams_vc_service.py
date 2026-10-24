@@ -215,6 +215,7 @@ STATE = {
     "started_at": None,
     "last_error": "",
     "frames": 0,
+    "input_frames": 0,
     "overflows": 0,
 }
 
@@ -369,20 +370,65 @@ def list_devices() -> dict:
     }
 
 
+def _prefer_wasapi(index: int, kind: str) -> int:
+    """Map a stale MME/DirectSound/WDM-KS selection to its WASAPI endpoint.
+
+    The UI now only offers WASAPI endpoints, but older pages or saved forms can
+    still send MME/WDM-KS indices.  WDM-KS is especially fragile after a rapid
+    stop/start, so avoid opening it when an equivalent WASAPI device exists.
+    """
+    devices = sd.query_devices()
+    hostapis = sd.query_hostapis()
+    info = devices[index]
+    host_name = str(hostapis[int(info.get("hostapi", 0))].get("name", ""))
+    if host_name not in ("MME", "Windows DirectSound", "Windows WDM-KS"):
+        return index
+    name = str(info.get("name", ""))
+    for candidate, item in enumerate(devices):
+        c_host = str(hostapis[int(item.get("hostapi", 0))].get("name", ""))
+        if c_host != "Windows WASAPI":
+            continue
+        c_name = str(item.get("name", ""))
+        if c_name != name:
+            continue
+        if kind == "input" and int(item.get("max_input_channels", 0)) > 0:
+            return candidate
+        if kind == "output" and int(item.get("max_output_channels", 0)) > 0:
+            return candidate
+    if kind == "output" and ("CABLE" in name or "VB-Audio" in name):
+        for candidate, item in enumerate(devices):
+            c_host = str(hostapis[int(item.get("hostapi", 0))].get("name", ""))
+            c_name = str(item.get("name", ""))
+            if c_host == "Windows WASAPI" and ("VSpk" in c_name or "CABLE" in c_name) and int(item.get("max_output_channels", 0)) > 0:
+                return candidate
+    if "Realtek" in name:
+        for candidate, item in enumerate(devices):
+            c_host = str(hostapis[int(item.get("hostapi", 0))].get("name", ""))
+            c_name = str(item.get("name", ""))
+            if c_host == "Windows WASAPI" and "Realtek" in c_name:
+                if kind == "input" and int(item.get("max_input_channels", 0)) > 0:
+                    return candidate
+                if kind == "output" and int(item.get("max_output_channels", 0)) > 0:
+                    return candidate
+    if kind == "input" and ("立体声混音" in name or "Stereo Mix" in name):
+        raise RuntimeError("请改用“WASAPI Loopback · 扬声器”作为系统输出；旧版立体声混音 WDM-KS 设备已不再使用")
+    return index
+
+
 def _pick_device(kind: str, preferred: int | None, name_contains: str) -> int:
     devices = sd.query_devices()
     if preferred is not None:
-        return int(preferred)
+        return _prefer_wasapi(int(preferred), kind)
     for index, item in enumerate(devices):
         name = str(item.get("name", ""))
         if name_contains.lower() in name.lower():
             if kind == "input" and int(item.get("max_input_channels", 0)) > 0:
-                return index
+                return _prefer_wasapi(index, kind)
             if kind == "output" and int(item.get("max_output_channels", 0)) > 0:
-                return index
+                return _prefer_wasapi(index, kind)
     default = sd.default.device[0 if kind == "input" else 1]
     if default is not None and int(default) >= 0:
-        return int(default)
+        return _prefer_wasapi(int(default), kind)
     raise RuntimeError("no " + kind + " audio device")
 
 
@@ -609,6 +655,8 @@ def start_session(params: dict) -> dict:
 
             def consume_loopback(in_data):
                 try:
+                    with STATE_LOCK:
+                        STATE["input_frames"] += int(len(in_data) // (2 * channels))
                     raw = np.frombuffer(in_data, dtype=np.int16)
                     if channels > 1:
                         raw = raw.reshape(-1, channels).mean(axis=1)
@@ -780,6 +828,8 @@ def start_session(params: dict) -> dict:
             )
             stream.start()
         except Exception:
+            try: stream.close()
+            except Exception: pass
             if engine is not None:
                 raise
             try:
@@ -825,6 +875,34 @@ def start_session(params: dict) -> dict:
     return status_payload()
 
 
+def start_session_with_retry(params: dict) -> dict:
+    last_error = None
+    for attempt in range(3):
+        try:
+            return start_session(params)
+        except Exception as exc:
+            last_error = exc
+            message = str(exc)
+            retryable = ("PaErrorCode -9999" in message or "PaErrorCode -9997" in message or "WdmSyncIoctl" in message)
+            if attempt >= 2 or not retryable:
+                raise
+            try:
+                stop_session()
+            except Exception:
+                pass
+            time.sleep(0.45 * (attempt + 1))
+            try:
+                # PortAudio/WASAPI can leave the endpoint in a transient
+                # not-ready state after a fast stop/start cycle.
+                sd._terminate()
+                sd._initialize()
+            except Exception:
+                pass
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("VC start failed")
+
+
 def stop_session() -> dict:
     global STREAM, RVC_ENGINE, MONITOR_STREAM, MONITOR_QUEUE
     with STATE_LOCK:
@@ -852,6 +930,9 @@ def stop_session() -> dict:
         except Exception as exc:
             with STATE_LOCK:
                 STATE["last_error"] = str(exc)
+    # Give WDM/WASAPI a moment to release the endpoint before a new start.
+    if stream is not None or monitor is not None:
+        time.sleep(0.25)
     return status_payload()
 
 
@@ -909,7 +990,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._body()
             if path == "/vc/session/start":
-                self._send(200, start_session(body))
+                self._send(200, start_session_with_retry(body))
             elif path == "/vc/session/stop":
                 self._send(200, stop_session())
             elif path == "/vc/session/switch-voice":
@@ -947,7 +1028,7 @@ class Handler(BaseHTTPRequestHandler):
                         self._send(200, status_payload())
                     else:
                         stop_session()
-                        self._send(200, start_session(params))
+                        self._send(200, start_session_with_retry(params))
                 else:
                     with STATE_LOCK:
                         STATE["voice"] = body.get("voice")
