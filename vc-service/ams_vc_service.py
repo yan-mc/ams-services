@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import sys
 import threading
 import time
@@ -155,6 +156,7 @@ STATE = {
 
 def list_devices() -> dict:
     devices = sd.query_devices()
+    hostapis = sd.query_hostapis()
     inputs = []
     outputs = []
     for index, item in enumerate(devices):
@@ -164,6 +166,7 @@ def list_devices() -> dict:
                 "index": index,
                 "name": name,
                 "hostapi": str(item.get("hostapi", "")),
+                "hostapi_name": str(hostapis[int(item.get("hostapi", 0))].get("name", "")),
                 "channels": int(item.get("max_input_channels", 0)),
                 "samplerate": float(item.get("default_samplerate", 0)),
                 "kind": "loopback" if ("Stereo Mix" in name or "立体声混音" in name or "CABLE-A Output" in name or "CABLE Output" in name or "VMic" in name) else "input",
@@ -173,6 +176,7 @@ def list_devices() -> dict:
                 "index": index,
                 "name": name,
                 "hostapi": str(item.get("hostapi", "")),
+                "hostapi_name": str(hostapis[int(item.get("hostapi", 0))].get("name", "")),
                 "channels": int(item.get("max_output_channels", 0)),
                 "samplerate": float(item.get("default_samplerate", 0)),
                 "kind": "virtual" if ("VSpk" in name or "CABLE Input" in name or "CABLE-A" in name or "CABLE" in name) else "output",
@@ -207,6 +211,45 @@ def _pick_device(kind: str, preferred: int | None, name_contains: str) -> int:
     raise RuntimeError("no " + kind + " audio device")
 
 
+def _match_hostapi(input_device: int, output_device: int) -> tuple[int, int]:
+    """PortAudio cannot combine devices from different host APIs in one stream.
+    For a system-loopback input (WDM-KS Stereo Mix), prefer the VB-Cable output
+    on the same host API instead of failing with an opaque error."""
+    devices = sd.query_devices()
+    in_info = devices[input_device]
+    out_info = devices[output_device]
+    if int(in_info.get("hostapi", -1)) == int(out_info.get("hostapi", -2)):
+        return input_device, output_device
+    hostapi = int(in_info.get("hostapi", -1))
+    for index, item in enumerate(devices):
+        name = str(item.get("name", ""))
+        if int(item.get("hostapi", -1)) == hostapi and int(item.get("max_output_channels", 0)) > 0 and ("VSpk" in name or "CABLE" in name):
+            return input_device, index
+    raise RuntimeError("输入和输出设备属于不同音频后端，请选择同一后端（例如 WDM-KS 的立体声混音 + WDM-KS 的 CABLE 输出）")
+
+
+class SplitStream:
+    def __init__(self, input_stream, output_stream):
+        self.input_stream = input_stream
+        self.output_stream = output_stream
+
+    def start(self):
+        self.output_stream.start()
+        self.input_stream.start()
+
+    def stop(self):
+        try: self.input_stream.stop()
+        except Exception: pass
+        try: self.output_stream.stop()
+        except Exception: pass
+
+    def close(self):
+        try: self.input_stream.close()
+        except Exception: pass
+        try: self.output_stream.close()
+        except Exception: pass
+
+
 def _stream_callback(indata, outdata, frames, time_info, status):
     if status:
         with STATE_LOCK:
@@ -223,6 +266,7 @@ def start_session(params: dict) -> dict:
             raise RuntimeError("session already running")
     input_device = _pick_device("input", params.get("input_device"), params.get("input_name") or "USB Audio")
     output_device = _pick_device("output", params.get("output_device"), params.get("output_name") or "VSpk")
+    input_device, output_device = _match_hostapi(input_device, output_device)
     mode = str(params.get("mode") or "passthrough").lower()
     engine = None
     if mode == "rvc":
@@ -245,33 +289,101 @@ def start_session(params: dict) -> dict:
             samplerate = 48000
         blocksize = max(256, samplerate // 100)
         callback = _stream_callback
-    # Use a conservative one-channel stream. PortAudio/MME usually accepts 48k.
-    try:
-        stream = sd.Stream(
-            device=(input_device, output_device),
-            samplerate=samplerate,
-            channels=1,
-            dtype="float32",
-            blocksize=blocksize,
-            callback=callback,
-        )
-        stream.start()
-    except Exception:
+    # WDM-KS inputs (notably Stereo Mix) often cannot be paired with a
+    # different-host duplex stream. Use independent input/output streams for
+    # loopback devices; the microphone path keeps the lower-latency duplex.
+    input_name = str(sd.query_devices(input_device).get("name", ""))
+    is_loopback = any(token in input_name for token in ("立体声混音", "Stereo Mix", "CABLE-A Output", "CABLE Output", "VMic"))
+    if is_loopback:
+        frames_queue = queue.Queue(maxsize=8)
+        in_resampler = None
+        out_resampler = None
         if engine is not None:
-            raise
+            # WDM-KS Stereo Mix usually rejects the model rate (40k). Use the
+            # device-native 48k stream and resample into/out of the RVC engine.
+            import torch
+            import torchaudio.transforms as tat
+            device_sr = 48000
+            samplerate = device_sr
+            blocksize = int(round(0.25 * device_sr))
+            in_resampler = tat.Resample(orig_freq=device_sr, new_freq=engine.sr, dtype=torch.float32)
+            out_resampler = tat.Resample(orig_freq=engine.sr, new_freq=device_sr, dtype=torch.float32)
+
+        def input_cb(indata, frames, time_info, status):
+            try:
+                if engine is not None:
+                    mono = np.asarray(indata, dtype=np.float32)
+                    if mono.ndim > 1: mono = mono[:, 0]
+                    res = in_resampler(torch.from_numpy(mono.copy())).numpy()
+                    if res.shape[0] < engine.block_frame:
+                        res = np.pad(res, (0, engine.block_frame - res.shape[0]))
+                    if res.shape[0] > engine.block_frame:
+                        res = res[-engine.block_frame:]
+                    tmp = np.zeros((engine.block_frame, 1), dtype="float32")
+                    engine.callback(res.reshape(-1, 1), tmp, engine.block_frame, time_info, status)
+                    out = out_resampler(torch.from_numpy(tmp[:, 0].copy())).numpy()
+                    data = out.reshape(-1, 1)
+                else:
+                    data = indata.copy()
+                try:
+                    frames_queue.put_nowait(data)
+                except queue.Full:
+                    try: frames_queue.get_nowait()
+                    except queue.Empty: pass
+                    try: frames_queue.put_nowait(data)
+                    except queue.Full: pass
+            except Exception as exc:
+                with STATE_LOCK:
+                    STATE["last_error"] = str(exc)
+
+        def output_cb(outdata, frames, time_info, status):
+            try:
+                data = frames_queue.get_nowait()
+            except queue.Empty:
+                outdata.fill(0)
+            else:
+                if data.shape[0] < frames:
+                    data = np.pad(data, ((0, frames - data.shape[0]), (0, 0)))
+                outdata[:] = data[:frames]
+            with STATE_LOCK:
+                STATE["frames"] += int(frames)
+
+        input_stream = sd.InputStream(device=input_device, samplerate=samplerate, channels=1, dtype="float32", blocksize=blocksize, callback=input_cb)
+        output_stream = sd.OutputStream(device=output_device, samplerate=samplerate, channels=1, dtype="float32", blocksize=blocksize, callback=output_cb)
+        stream = SplitStream(input_stream, output_stream)
         try:
-            samplerate = 44100
+            stream.start()
+        except Exception:
+            stream.close()
+            raise
+    else:
+        # Use a conservative one-channel stream. PortAudio/MME usually accepts 48k.
+        try:
             stream = sd.Stream(
                 device=(input_device, output_device),
                 samplerate=samplerate,
                 channels=1,
                 dtype="float32",
-                blocksize=441,
+                blocksize=blocksize,
                 callback=callback,
             )
             stream.start()
         except Exception:
-            raise
+            if engine is not None:
+                raise
+            try:
+                samplerate = 44100
+                stream = sd.Stream(
+                    device=(input_device, output_device),
+                    samplerate=samplerate,
+                    channels=1,
+                    dtype="float32",
+                    blocksize=441,
+                    callback=callback,
+                )
+                stream.start()
+            except Exception:
+                raise
     with STATE_LOCK:
         STREAM = stream
         RVC_ENGINE = engine
