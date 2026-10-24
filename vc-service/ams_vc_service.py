@@ -28,6 +28,39 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+
+# Keep every writable temp/cache location under <install-root>/data, even when
+# the service is launched manually instead of by the Host plugin.
+def _prepare_data_env() -> None:
+    home = os.environ.get("AMS_HOME", "").strip()
+    if not home:
+        home = str(Path(__file__).resolve().parents[2])
+    if not home:
+        return
+    os.environ.setdefault("AMS_HOME", home)
+    temp = Path(home) / "tmp"
+    cache = Path(home) / "cache"
+    paths = {
+        "TEMP": temp,
+        "TMP": temp,
+        "TMPDIR": temp,
+        "TORCH_HOME": cache / "torch",
+        "TORCH_EXTENSIONS_DIR": cache / "torch-extensions",
+        "HF_HOME": cache / "huggingface",
+        "HUGGINGFACE_HUB_CACHE": cache / "huggingface" / "hub",
+        "TRANSFORMERS_CACHE": cache / "huggingface" / "transformers",
+        "XDG_CACHE_HOME": cache,
+        "MPLCONFIGDIR": cache / "matplotlib",
+        "NUMBA_CACHE_DIR": cache / "numba",
+        "PYTHONPYCACHEPREFIX": cache / "pycache",
+    }
+    for key, path in paths.items():
+        path.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault(key, str(path))
+
+
+_prepare_data_env()
+
 import numpy as np
 import sounddevice as sd
 
@@ -57,10 +90,21 @@ class RvcEngine:
         if os.environ.get("AMS_VC_DEVICE", "").lower() == "cpu":
             self.config.device = torch.device("cpu")
             self.config.is_half = False
+        self.index_warning = ""
         self.rvc = rtrvc.RVC(
             int(pitch), 0.0, voice, index_path or "", float(index_rate),
             1, None, None, self.config, None,
         )
+        if not hasattr(self.rvc, "tgt_sr") and index_path:
+            # A stale/incompatible faiss index must not make realtime unusable;
+            # retry without it and surface a non-fatal warning in status.
+            self.index_warning = "索引文件加载失败，已自动禁用 index"
+            index_path = None
+            index_rate = 0.0
+            self.rvc = rtrvc.RVC(
+                int(pitch), 0.0, voice, "", 0.0,
+                1, None, None, self.config, None,
+            )
         if not hasattr(self.rvc, "tgt_sr"):
             raise RuntimeError("RVC model load failed; check pth/index and runtime log")
         self.sr = int(self.rvc.tgt_sr)
@@ -394,7 +438,7 @@ def start_session(params: dict) -> dict:
             "output_device": output_device,
             "samplerate": samplerate,
             "started_at": time.time(),
-            "last_error": engine.last_error if engine is not None else "",
+            "last_error": (engine.last_error or engine.index_warning) if engine is not None else "",
             "voice": params.get("voice"),
             "index": params.get("index_path"),
             "pitch": int(params.get("pitch") or 0),
