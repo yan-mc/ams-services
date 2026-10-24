@@ -82,6 +82,10 @@ class Settings:
         return self.ams_home / "artifacts"
 
     @property
+    def tts_voices_dir(self) -> Path:
+        return self.ams_home / "tts_voices"
+
+    @property
     def projects_dir(self) -> Path:
         return self.ams_home / "projects"
 
@@ -112,6 +116,7 @@ class Settings:
             self.runtime_dir,
             self.logs_dir,
             self.voices_dir,
+            self.tts_voices_dir,
             self.artifacts_dir,
             self.projects_dir,
             self.imports_dir,
