@@ -24,12 +24,15 @@ def list_tts_models(request: Request) -> dict:
     roots.insert(0, settings.tts_voices_dir)
 
     models: list[dict] = []
+    # De-duplicate by model name, not by absolute path. The user directory is
+    # scanned first, so a user copy intentionally overrides the bundled runtime
+    # model with the same stem instead of showing two identical options.
     seen: set[str] = set()
     for root in roots:
         if not root.is_dir():
             continue
         for path in sorted(root.rglob("*.onnx")):
-            key = str(path.resolve())
+            key = path.stem.casefold()
             if key in seen:
                 continue
             seen.add(key)
