@@ -56,6 +56,8 @@ def parse_args(argv):
     parser.add_argument("--rms-mix-rate", type=float, default=0.25)
     parser.add_argument("--protect", type=float, default=0.33)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--chunk-sec", type=float, default=300.0)
+    parser.add_argument("--overlap-sec", type=float, default=0.05)
     parser.add_argument("--is-half", action="store_true", default=True)
     return parser.parse_args(argv)
 
@@ -177,31 +179,76 @@ def main(argv=None):
             torch.cuda.synchronize()
 
         progress(22, "load_audio", "加载并重采样输入音频")
-        heartbeat = Heartbeat(25.0, 85.0)
-        heartbeat.start()
-        started = time.perf_counter()
-        rvc_info, wav_opt = vc.vc_single(
-            0,
-            str(input_path),
-            int(args.f0_up_key),
-            None,
-            str(args.f0_method),
-            str(index_path) if index_path else "",
-            None,
-            float(args.index_rate),
-            int(args.filter_radius),
-            int(args.resample_sr),
-            float(args.rms_mix_rate),
-            float(args.protect),
-        )
-        infer_sec = time.perf_counter() - started
-        heartbeat.stop()
-        heartbeat = None
-        if wav_opt is None or wav_opt[0] is None:
-            raise RuntimeError("RVC 推理未返回音频：%s" % str(rvc_info)[:500])
+        info = sf.info(str(input_path))
+        total_input_sec = float(info.duration or 0.0)
+        chunk_sec = float(getattr(args, "chunk_sec", 300.0) or 300.0)
+        overlap_sec = float(getattr(args, "overlap_sec", 0.05) or 0.05)
+        chunk_paths = [input_path]
+        if total_input_sec > max(600.0, chunk_sec * 2):
+            source, source_sr = sf.read(str(input_path), always_2d=False)
+            source = np.asarray(source)
+            if source.ndim > 1:
+                source = source.mean(axis=1)
+            chunk_dir = output_path.parent / "chunks"
+            chunk_dir.mkdir(parents=True, exist_ok=True)
+            step = max(1, int(chunk_sec * source_sr))
+            overlap = max(1, int(overlap_sec * source_sr))
+            chunk_paths = []
+            for index, start in enumerate(range(0, len(source), step)):
+                end = min(len(source), start + step + overlap)
+                part = chunk_dir / ("part_%03d.wav" % index)
+                sf.write(str(part), source[start:end], source_sr, subtype="PCM_24")
+                chunk_paths.append(part)
+            log("info", "长音频分段：%d 段，总长 %.1f 秒" % (len(chunk_paths), total_input_sec))
 
-        sample_rate, audio = int(wav_opt[0]), wav_opt[1]
-        array = np.asarray(audio)
+        parts = []
+        total_infer = 0.0
+        for index, chunk in enumerate(chunk_paths):
+            progress(24 + 55.0 * index / max(1, len(chunk_paths)), "infer", "分段 %d/%d" % (index + 1, len(chunk_paths)))
+            heartbeat = Heartbeat(25.0, 85.0)
+            heartbeat.start()
+            started = time.perf_counter()
+            rvc_info, wav_opt = vc.vc_single(
+                0,
+                str(chunk),
+                int(args.f0_up_key),
+                None,
+                str(args.f0_method),
+                str(index_path) if index_path else "",
+                None,
+                float(args.index_rate),
+                int(args.filter_radius),
+                int(args.resample_sr),
+                float(args.rms_mix_rate),
+                float(args.protect),
+            )
+            total_infer += time.perf_counter() - started
+            heartbeat.stop()
+            heartbeat = None
+            if wav_opt is None or wav_opt[0] is None:
+                raise RuntimeError("RVC 推理未返回音频：%s" % str(rvc_info)[:500])
+            parts.append((int(wav_opt[0]), np.asarray(wav_opt[1])))
+
+        infer_sec = total_infer
+        if len(parts) == 1:
+            sample_rate, array = parts[0]
+        else:
+            sample_rate = parts[0][0]
+            if any(item[0] != sample_rate for item in parts):
+                raise RuntimeError("RVC 分段输出采样率不一致")
+            fade = max(1, int(overlap_sec * sample_rate))
+            merged = parts[0][1]
+            for _, nxt in parts[1:]:
+                n = min(fade, len(merged), len(nxt))
+                if n > 1:
+                    t = np.linspace(0.0, 1.0, n, dtype=np.float32)
+                    merged = merged.copy()
+                    merged[-n:] = merged[-n:] * (1.0 - t) + nxt[:n] * t
+                    merged = np.concatenate([merged, nxt[n:]])
+                else:
+                    merged = np.concatenate([merged, nxt])
+            array = merged
+        array = np.asarray(array)
         if array.dtype.kind in ("i", "u"):
             array = array.astype(np.float32) / (float(np.iinfo(array.dtype).max) + 1.0)
         else:
@@ -214,6 +261,8 @@ def main(argv=None):
 
         meta = {
             "engine": "rvc",
+            "chunks": len(chunk_paths),
+            "chunk_sec": float(getattr(args, "chunk_sec", 300.0) or 300.0),
             "rvc_info": str(rvc_info),
             "voice": voice_path.name,
             "index_used": bool(index_path),
