@@ -115,7 +115,21 @@ def main():
     pretrain_dir = root / "assets" / ("pretrained_v2" if args.version == "v2" else "pretrained")
     pg = pretrain_dir / (("f0G" if args.if_f0 else "G") + args.sample_rate + ".pth")
     pd = pretrain_dir / (("f0D" if args.if_f0 else "D") + args.sample_rate + ".pth")
-    command = [py, "infer/modules/train/train.py", "-e", args.exp_name, "-sr", args.sample_rate, "-f0", str(args.if_f0), "-bs", str(args.batch_size), "-g", args.gpu, "-te", str(args.epochs), "-se", str(args.save_every), "-l", "1", "-c", "0", "-sw", "1", "-v", args.version]
+    effective_batch = args.batch_size
+    try:
+        import torch
+        if torch.cuda.is_available():
+            free_bytes, _total = torch.cuda.mem_get_info()
+            free_gb = free_bytes / (1024 ** 3)
+            if free_gb < 6 and effective_batch > 1:
+                effective_batch = 1
+            elif free_gb < 10 and effective_batch > 2:
+                effective_batch = 2
+            if effective_batch != args.batch_size:
+                emit({"type": "log", "level": "warning", "message": "GPU free %.1f GB; batch %s -> %s" % (free_gb, args.batch_size, effective_batch)})
+    except Exception:
+        pass
+    command = [py, "infer/modules/train/train.py", "-e", args.exp_name, "-sr", args.sample_rate, "-f0", str(args.if_f0), "-bs", str(effective_batch), "-g", args.gpu, "-te", str(args.epochs), "-se", str(args.save_every), "-l", "1", "-c", "0", "-sw", "1", "-v", args.version]
     if pg.is_file(): command.extend(["-pg", str(pg)])
     if pd.is_file(): command.extend(["-pd", str(pd)])
     run(command, root, "train", 50, 85)
