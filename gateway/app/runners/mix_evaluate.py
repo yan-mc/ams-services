@@ -39,9 +39,9 @@ class MixMasterRunner(ProtocolProcessRunner):
             if not Path(value).expanduser().is_file(): raise RunnerError("INPUT_NOT_FOUND",f"音频不存在：{value}")
         loud=str(params.get("loudness") or "-14")
         peak=str(params.get("true_peak") or "-1")
-        return {"input_paths":";".join(paths),"loudness":loud,"true_peak":peak,"gains":str(params.get("track_gains") or ""),"pans":str(params.get("track_pans") or ""),"eq_low":str(params.get("eq_low") or ""),"eq_mid":str(params.get("eq_mid") or ""),"eq_high":str(params.get("eq_high") or "")}
+        return {"input_paths":";".join(paths),"loudness":loud,"true_peak":peak,"gains":str(params.get("track_gains") or ""),"pans":str(params.get("track_pans") or ""),"eq_low":str(params.get("eq_low") or ""),"eq_mid":str(params.get("eq_mid") or ""),"eq_high":str(params.get("eq_high") or ""),"highpass":str(params.get("highpass") or ""),"lowpass":str(params.get("lowpass") or ""),"mutes":str(params.get("track_mutes") or ""),"compressor":str(params.get("compressor") or "false")}
     def build_command(self,cfg:BackendConfig,params:dict[str,Any],ctx:JobContext):
         python,root=cfg.require_rvc(); script=self.resolved_script_path(); ff=Path(root)/"ffmpeg.exe"
         if not ff.is_file(): raise RunnerError("BACKEND_NOT_CONFIGURED",f"ffmpeg 不存在：{ff}")
         output=ctx.work_dir/"mix.wav"
-        return [str(python),"-B",str(script),"--inputs",params["input_paths"],"--output",str(output),"--ffmpeg",str(ff),"--loudness",params["loudness"],"--true-peak",params["true_peak"],"--gains",params["gains"],"--pans",params["pans"],"--eq-low",params["eq_low"],"--eq-mid",params["eq_mid"],"--eq-high",params["eq_high"]], None, None
+        return [str(python),"-B",str(script),"--inputs",params["input_paths"],"--output",str(output),"--ffmpeg",str(ff),"--loudness",params["loudness"],"--true-peak",params["true_peak"],"--gains",params["gains"],"--pans",params["pans"],"--eq-low",params["eq_low"],"--eq-mid",params["eq_mid"],"--eq-high",params["eq_high"],"--highpass",params["highpass"],"--lowpass",params["lowpass"],"--mutes",params["mutes"],"--compressor",params["compressor"]], None, None
