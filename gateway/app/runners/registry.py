@@ -10,6 +10,8 @@ from .pymss import PymssSeparateRunner
 from .rvc import RvcConvertRunner
 from .tts import TtsSynthesizeRunner
 from .train import RvcTrainRunner
+from .tts_train import TtsTrainRunner
+from .tts_dataset import TtsDatasetPrepareRunner
 from .dataset import DatasetPrepareRunner
 from .mix_evaluate import EvaluateAudioRunner, MixMasterRunner
 
@@ -33,6 +35,16 @@ BACKEND_JOB_TYPES = (
         "type": "train.rvc",
         "gpu": True,
         "description": "RVC 音源炼制（数据集 → pth + index → 注册音色）",
+    },
+    {
+        "type": "train.tts",
+        "gpu": True,
+        "description": "TTS 音源炼制（数据集 → onnx + onnx.json → 注册）",
+    },
+    {
+        "type": "tts.dataset.prepare",
+        "gpu": False,
+        "description": "TTS 数据集导入/校验（metadata.csv + wav）",
     },
     {
         "type": "tts.synthesize",
@@ -83,6 +95,18 @@ def register_backend_runners(
         description=BACKEND_JOB_TYPES[2]["description"],
     )
     registry.register(
+        "train.tts",
+        lambda: TtsTrainRunner(),
+        gpu=True,
+        description="TTS 音源炼制（Piper/VITS）",
+    )
+    registry.register(
+        "tts.dataset.prepare",
+        lambda: TtsDatasetPrepareRunner(),
+        gpu=False,
+        description="TTS 数据集导入/校验",
+    )
+    registry.register(
         "tts.synthesize",
         lambda: TtsSynthesizeRunner(),
         gpu=False,
@@ -106,10 +130,3 @@ def register_backend_runners(
         gpu=False,
         description=BACKEND_JOB_TYPES[6]["description"],
     )
-    registry.register(
-        "mix.master",
-        lambda: MixMasterRunner(),
-        gpu=False,
-        description=BACKEND_JOB_TYPES[7]["description"],
-    )
-    return registry
