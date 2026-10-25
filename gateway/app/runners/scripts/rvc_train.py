@@ -129,10 +129,11 @@ def main():
                 emit({"type": "log", "level": "warning", "message": "GPU free %.1f GB; batch %s -> %s" % (free_gb, args.batch_size, effective_batch)})
     except Exception:
         pass
-    command = [py, "infer/modules/train/train.py", "-e", args.exp_name, "-sr", args.sample_rate, "-f0", str(args.if_f0), "-bs", str(effective_batch), "-g", args.gpu, "-te", str(args.epochs), "-se", str(args.save_every), "-l", "1", "-c", "0", "-sw", "1", "-v", args.version]
+    command = [py, "-u", "infer/modules/train/train.py", "-e", args.exp_name, "-sr", args.sample_rate, "-f0", str(args.if_f0), "-bs", str(effective_batch), "-g", args.gpu, "-te", str(args.epochs), "-se", str(args.save_every), "-l", "1", "-c", "0", "-sw", "1", "-v", args.version]
     if pg.is_file(): command.extend(["-pg", str(pg)])
     if pd.is_file(): command.extend(["-pd", str(pd)])
     run(command, root, "train", 50, 85)
+    progress(85, "train", "epochs complete")
 
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
@@ -153,6 +154,7 @@ def main():
     index.add(arr)
     index_path = exp / (args.model_name + ".index")
     faiss.write_index(index, str(index_path))
+    progress(92, "index", "index written")
 
     voice_dir.mkdir(parents=True, exist_ok=True)
     target = voice_dir / args.model_name
@@ -162,6 +164,7 @@ def main():
     import shutil
     shutil.copy2(pth, target / (args.model_name + ".pth"))
     shutil.copy2(index_path, target / (args.model_name + ".index"))
+    progress(98, "register", "voice registered")
     (target / "voice.json").write_text(json.dumps({"name": args.model_name, "source": "dataset:" + str(dataset), "version": args.version, "sample_rate": args.sample_rate, "epochs": args.epochs, "f0": bool(args.if_f0), "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")}, ensure_ascii=False, indent=2), encoding="utf-8")
     progress(100, "done")
     emit({"type": "artifact", "name": args.model_name + ".pth", "path": str(target / (args.model_name + ".pth")), "kind": "model"})

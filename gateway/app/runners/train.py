@@ -16,7 +16,7 @@ SAFE_NAME = re.compile(r"^[A-Za-z0-9_\-\u4e00-\u9fff]{1,64}$")
 class RvcTrainRunner(ProtocolProcessRunner):
     job_type = "train.rvc"
     gpu = True
-    timeout_sec = 7200.0
+    timeout_sec = 21600.0
     description = "RVC 音源炼制（数据集 → pth + index → 注册音色）"
 
     def default_script_path(self) -> Path:
