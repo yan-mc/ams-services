@@ -253,6 +253,18 @@ def main(argv=None):
             array = array.astype(np.float32) / (float(np.iinfo(array.dtype).max) + 1.0)
         else:
             array = array.astype(np.float32)
+        target_len = int(round(total_input_sec * sample_rate)) if sample_rate else 0
+        if target_len > 0 and len(array) != target_len:
+            if len(array) > target_len:
+                array = array[:target_len]
+            else:
+                array = np.pad(array, (0, target_len - len(array)))
+        peak_before = float(np.max(np.abs(array))) if len(array) else 0.0
+        normalized = False
+        if peak_before > 0.99:
+            array = array * (0.98 / peak_before)
+            normalized = True
+        rms = float(np.sqrt(np.mean(np.square(array)))) if len(array) else 0.0
         duration = len(array) / float(sample_rate) if sample_rate else 0.0
 
         progress(92, "save", "写出 wav")
@@ -279,6 +291,10 @@ def main(argv=None):
             "sample_rate": sample_rate,
             "duration_sec": round(duration, 4),
             "peak": round(float(np.max(np.abs(array))) if len(array) else 0.0, 6),
+            "peak_before": round(peak_before, 6),
+            "normalized": normalized,
+            "rms_dbfs": round(20.0 * np.log10(max(rms, 1e-9)), 3),
+            "input_duration_sec": round(total_input_sec, 4),
         }
         if torch.cuda.is_available():
             meta["vram_peak_alloc_mb"] = int(torch.cuda.max_memory_allocated() / 1024 ** 2)
