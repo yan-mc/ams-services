@@ -14,6 +14,54 @@ def progress(p, stage, message=None):
 def log(level, message):
     emit({"type":"log","level":level,"message":str(message)[:1000]})
 
+def preprocess_single(dataset, out, language, sample_rate, quality):
+    """Single-process Piper preprocess (Windows spawn workers are unreliable)."""
+    import piper_phonemize as pp
+    from piper_train.norm_audio import cache_norm_audio, make_silence_detector
+    template = Path(os.environ["AMS_TTS_CONFIG"])
+    cfg = json.loads(template.read_text(encoding="utf-8"))
+    cfg["audio"] = {"sample_rate": int(sample_rate), "quality": quality}
+    cfg["espeak"] = {"voice": language}
+    cfg["language"] = {"code": language}
+    cfg["phoneme_type"] = "espeak"
+    cfg["phoneme_map"] = {}
+    cfg["phoneme_id_map"] = pp.get_espeak_map()
+    cfg["num_symbols"] = pp.get_max_phonemes()
+    cfg["num_speakers"] = 1
+    cfg["speaker_id_map"] = {}
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "config.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    detector = make_silence_detector()
+    cache = out / "cache" / str(sample_rate)
+    cache.mkdir(parents=True, exist_ok=True)
+    rows = []
+    lines = (dataset / "metadata.csv").read_text(encoding="utf-8").splitlines()
+    for line in lines:
+        if not line.strip():
+            continue
+        name, text = line.split("|", 1)
+        wav = dataset / "wav" / (name + ".wav")
+        if not wav.is_file():
+            continue
+        phones = pp.phonemize_espeak(text, language)
+        flat = [x for sentence in phones for x in sentence]
+        if not flat:
+            continue
+        ids = pp.phoneme_ids_espeak(flat)
+        norm, spec = cache_norm_audio(wav, cache, detector, int(sample_rate))
+        rows.append({"text": text, "audio_path": str(wav), "speaker": None,
+                     "speaker_id": None, "phonemes": flat, "phoneme_ids": ids,
+                     "audio_norm_path": str(norm), "audio_spec_path": str(spec)})
+        if len(rows) % 50 == 0:
+            progress(8 + 20 * min(1.0, len(rows) / max(1, len(lines))), "preprocess", f"{len(rows)} rows")
+    if not rows:
+        raise RuntimeError("preprocess produced no rows")
+    with (out / "dataset.jsonl").open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return len(rows)
+
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--root", required=True)
@@ -55,13 +103,11 @@ def main():
     if not (dataset/"wav").is_dir():
         raise RuntimeError("wav/ missing: "+str(dataset))
 
-    progress(8,"preprocess","piper_train.preprocess")
-    from piper_train.preprocess import main as pre_main
-    sys.argv=["preprocess","--input-dir",str(dataset),"--output-dir",str(pre),
-              "--language",args.language,"--sample-rate",str(args.sample_rate),
-              "--dataset-format","ljspeech","--single-speaker","--max-workers","1"]
-    pre_main()
-    progress(30,"preprocess","dataset ready")
+    progress(8,"preprocess","single-process Piper preprocess")
+    count = preprocess_single(dataset, pre, args.language, args.sample_rate, args.quality)
+    if count <= 0:
+        raise RuntimeError("preprocess produced no rows")
+    progress(30,"preprocess",str(count)+" rows ready")
 
     base=Path(args.base_checkpoint).expanduser() if args.base_checkpoint else (root/"checkpoints"/"epoch=3269-step=2460540.ckpt")
     if not base.is_file():
