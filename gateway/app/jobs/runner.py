@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -213,7 +214,10 @@ def kill_process_tree(pid: int) -> None:
 
 
 def _spawn_python(code: str, *args: str) -> subprocess.Popen:
-    command = [sys.executable, "-c", code, *args]
+    python = os.environ.get("AMS_MOCK_PYTHON") or os.environ.get("AMS_RVC_PYTHON")
+    if not python or not Path(python).is_file():
+        python = sys.executable if not getattr(sys, "frozen", False) else (shutil.which("python") or "python")
+    command = [python, "-c", code, *args]
     kwargs: dict[str, Any] = {
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
