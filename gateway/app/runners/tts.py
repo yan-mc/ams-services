@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import wave
+from array import array
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,35 @@ from .config import RunnerError
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
+
+
+def limit_peak(path: Path, target: float = 0.98) -> None:
+    """Scale 16-bit PCM down only if its peak exceeds target (-0.17 dBFS)."""
+    try:
+        with wave.open(str(path), "rb") as reader:
+            params = reader.getparams()
+            if params.sampwidth != 2:
+                return
+            samples = array("h")
+            samples.frombytes(reader.readframes(reader.getnframes()))
+        if not samples:
+            return
+        peak = max(abs(v) for v in samples)
+        ceiling = int(32767 * target)
+        if peak <= ceiling:
+            return
+        scale = ceiling / peak
+        for i, value in enumerate(samples):
+            scaled = int(round(value * scale))
+            samples[i] = max(-32768, min(32767, scaled))
+        tmp = path.with_name(path.name + ".limit.tmp")
+        with wave.open(str(tmp), "wb") as writer:
+            writer.setparams(params)
+            writer.writeframes(samples.tobytes())
+        tmp.replace(path)
+    except Exception:
+        # Never fail a valid TTS result because optional limiting failed.
+        return
 
 
 def split_tts_text(text: str, limit: int = 1800) -> list[str]:
@@ -78,6 +109,16 @@ class TtsSynthesizeRunner:
             raise RunnerError("BACKEND_PATH_NOT_FOUND", f"TTS 模型不存在：{model}")
         if not config.is_file():
             raise RunnerError("BACKEND_PATH_NOT_FOUND", f"TTS 模型配置不存在：{config}")
+        piper_model = model
+        piper_config = config
+        if not (str(model).isascii() and str(config).isascii()):
+            # Piper on Windows cannot reliably open Unicode paths. Keep the
+            # user-facing Chinese voice folder but run from an ASCII copy.
+            piper_model = ctx.work_dir / "tts_model.onnx"
+            piper_config = ctx.work_dir / "tts_model.onnx.json"
+            shutil.copy2(model, piper_model)
+            shutil.copy2(config, piper_config)
+            ctx.log("info", "[tts.synthesize] Unicode model path; using ASCII staging copy")
         output = ctx.work_dir / "tts.wav"
         chunks = split_tts_text(text)
         if not chunks:
@@ -90,8 +131,8 @@ class TtsSynthesizeRunner:
             part = output if len(chunks) == 1 else (ctx.work_dir / ("tts_part_%03d.wav" % index))
             proc = await asyncio.create_subprocess_exec(
                 str(exe),
-                "--model", str(model),
-                "--config", str(config),
+                "--model", str(piper_model),
+                "--config", str(piper_config),
                 "--output_file", str(part),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
@@ -130,5 +171,6 @@ class TtsSynthesizeRunner:
                     writer.writeframes(frame)
         if not output.is_file() or output.stat().st_size == 0:
             raise RunnerError("TTS_FAILED", "Piper 未生成有效 WAV")
+        limit_peak(output)
         await ctx.progress(100, "done")
         return [ArtifactSpec(name="tts.wav", path=output, kind="audio", meta={"voice": model.stem, "text_length": len(text), "chunks": len(chunks)})]

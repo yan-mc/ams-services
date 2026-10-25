@@ -21,6 +21,7 @@ class TtsDatasetPrepareRunner(ProtocolProcessRunner):
         return {"source_path":str(Path(src).expanduser().resolve()),"dataset_name":name}
     def build_command(self,cfg:BackendConfig,p:dict[str,Any],ctx:JobContext):
         ams=Path(os.environ.get("AMS_HOME","")).expanduser()
-        python,_=cfg.require_rvc()
+        independent=ams/"runtime"/"tts-train"/"0.1.0"/"python"/"python.exe"
+        python=independent if independent.is_file() else cfg.require_rvc()[0]
         script=self.resolved_script_path()
         return [str(python),"-u","-B",str(script),"--ams-home",str(ams),"--source",p["source_path"],"--name",p["dataset_name"]],None,None

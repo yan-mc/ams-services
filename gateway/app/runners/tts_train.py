@@ -44,11 +44,12 @@ class TtsTrainRunner(ProtocolProcessRunner):
                 "sample_rate":int(params.get("sample_rate") or 22050)}
 
     def build_command(self, cfg: BackendConfig, params: dict[str, Any], ctx: JobContext) -> tuple[list[str], Path | None, dict[str,str] | None]:
-        python, _rvc_root = cfg.require_rvc()
         ams = Path(os.environ.get("AMS_HOME", "")).expanduser()
         if not ams.is_dir():
             raise RunnerError("BACKEND_NOT_CONFIGURED", "AMS_HOME 未配置")
         train_root = ams / "runtime" / "tts-train" / "0.1.0"
+        independent = train_root / "python" / "python.exe"
+        python = independent if independent.is_file() else cfg.require_rvc()[0]
         script = self.resolved_script_path()
         if not script.is_file():
             raise RunnerError("BACKEND_PATH_NOT_FOUND", f"TTS 训练脚本不存在：{script}")
