@@ -21,7 +21,8 @@ class EvaluateAudioRunner(ProtocolProcessRunner):
         return {"input_path":str(path),"reference_path":ref}
     def build_command(self,cfg:BackendConfig,params:dict[str,Any],ctx:JobContext):
         python,_=cfg.require_rvc(); script=self.resolved_script_path()
-        cmd=[str(python),"-B",str(script),"--input",params["input_path"],"--output-dir",str(ctx.work_dir)]
+        _,root=cfg.require_rvc()
+        cmd=[str(python),"-B",str(script),"--input",params["input_path"],"--output-dir",str(ctx.work_dir),"--ffmpeg",str(Path(root)/"ffmpeg.exe")]
         if params.get("reference_path"): cmd += ["--reference",params["reference_path"]]
         return cmd, None, None
 
@@ -38,9 +39,9 @@ class MixMasterRunner(ProtocolProcessRunner):
             if not Path(value).expanduser().is_file(): raise RunnerError("INPUT_NOT_FOUND",f"音频不存在：{value}")
         loud=str(params.get("loudness") or "-14")
         peak=str(params.get("true_peak") or "-1")
-        return {"input_paths":";".join(paths),"loudness":loud,"true_peak":peak}
+        return {"input_paths":";".join(paths),"loudness":loud,"true_peak":peak,"gains":str(params.get("track_gains") or ""),"pans":str(params.get("track_pans") or ""),"eq_low":str(params.get("eq_low") or ""),"eq_mid":str(params.get("eq_mid") or ""),"eq_high":str(params.get("eq_high") or "")}
     def build_command(self,cfg:BackendConfig,params:dict[str,Any],ctx:JobContext):
         python,root=cfg.require_rvc(); script=self.resolved_script_path(); ff=Path(root)/"ffmpeg.exe"
         if not ff.is_file(): raise RunnerError("BACKEND_NOT_CONFIGURED",f"ffmpeg 不存在：{ff}")
         output=ctx.work_dir/"mix.wav"
-        return [str(python),"-B",str(script),"--inputs",params["input_paths"],"--output",str(output),"--ffmpeg",str(ff),"--loudness",params["loudness"],"--true-peak",params["true_peak"]], None, None
+        return [str(python),"-B",str(script),"--inputs",params["input_paths"],"--output",str(output),"--ffmpeg",str(ff),"--loudness",params["loudness"],"--true-peak",params["true_peak"],"--gains",params["gains"],"--pans",params["pans"],"--eq-low",params["eq_low"],"--eq-mid",params["eq_mid"],"--eq-high",params["eq_high"]], None, None

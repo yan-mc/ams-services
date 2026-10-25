@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-import argparse, json, math, subprocess, sys
+import argparse, json, math, re, subprocess, sys
 from pathlib import Path
 import numpy as np
 import soundfile as sf
 
 def emit(x): print(json.dumps(x, ensure_ascii=False), flush=True)
 def main():
-    p=argparse.ArgumentParser(); p.add_argument('--input',required=True); p.add_argument('--reference',default=''); p.add_argument('--output-dir',required=True)
+    p=argparse.ArgumentParser(); p.add_argument('--input',required=True); p.add_argument('--reference',default=''); p.add_argument('--output-dir',required=True); p.add_argument('--ffmpeg',default='')
     a=p.parse_args(); src=Path(a.input).expanduser(); out=Path(a.output_dir); out.mkdir(parents=True,exist_ok=True)
     if not src.is_file(): raise RuntimeError('input not found: '+str(src))
     data,sr=sf.read(str(src),always_2d=True); ch=data.shape[1]; duration=len(data)/sr
@@ -21,6 +21,19 @@ def main():
             n=min(len(data),len(rdata)); x=data[:n].mean(axis=1); y=rdata[:n].mean(axis=1)
             noise=x-y; sig=float(np.mean(x*x)); noi=float(np.mean(noise*noise)); metrics['snr_db']=round(10*math.log10(max(sig,1e-12)/max(noi,1e-12)),3)
         else: metrics['snr_db']=None; metrics['snr_note']='reference sample rate differs'
+    if a.ffmpeg:
+        loud=subprocess.run([a.ffmpeg,'-hide_banner','-nostats','-i',str(src),'-af','ebur128=peak=true','-f','null','-'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        m=re.findall(r'I:\s*(-?\d+(?:\.\d+)?)\s*LUFS',loud.stderr)
+        if m: metrics['lufs_integrated']=float(m[-1])
+    if ref and ref.is_file():
+        try:
+            import librosa
+            x,_=librosa.load(str(src),sr=16000,mono=True); y,_=librosa.load(str(ref),sr=16000,mono=True)
+            fx=librosa.yin(x,fmin=60,fmax=500,sr=16000); fy=librosa.yin(y,fmin=60,fmax=500,sr=16000)
+            mx=float(np.nanmedian(fx)); my=float(np.nanmedian(fy))
+            metrics['pitch_median_hz']=round(mx,3); metrics['reference_pitch_median_hz']=round(my,3)
+            metrics['pitch_deviation_semitones']=round(12*math.log2(max(mx,1e-6)/max(my,1e-6)),3)
+        except Exception as exc: metrics['pitch_note']='pitch analysis skipped: '+str(exc)[:120]
     report={'schema':'ams.evaluate/1','input':str(src),'reference':str(ref) if ref else '',**metrics}
     path=out/'evaluation.json'; path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     emit({'type':'artifact','name':'evaluation.json','path':str(path),'kind':'report','meta':metrics})
