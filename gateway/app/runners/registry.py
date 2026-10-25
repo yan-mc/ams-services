@@ -11,6 +11,7 @@ from .rvc import RvcConvertRunner
 from .tts import TtsSynthesizeRunner
 from .train import RvcTrainRunner
 from .dataset import DatasetPrepareRunner
+from .mix_evaluate import EvaluateAudioRunner, MixMasterRunner
 
 BACKEND_JOB_TYPES = (
     {
@@ -42,6 +43,16 @@ BACKEND_JOB_TYPES = (
         "type": "dataset.prepare",
         "gpu": False,
         "description": "数据集导入/切片/校验",
+    },
+    {
+        "type": "evaluate.audio",
+        "gpu": False,
+        "description": "音频客观评测",
+    },
+    {
+        "type": "mix.master",
+        "gpu": False,
+        "description": "独立多轨混音/母带",
     },
 )
 
@@ -88,5 +99,17 @@ def register_backend_runners(
         lambda: DatasetPrepareRunner(),
         gpu=False,
         description=BACKEND_JOB_TYPES[5]["description"],
+    )
+    registry.register(
+        "evaluate.audio",
+        lambda: EvaluateAudioRunner(),
+        gpu=False,
+        description=BACKEND_JOB_TYPES[6]["description"],
+    )
+    registry.register(
+        "mix.master",
+        lambda: MixMasterRunner(),
+        gpu=False,
+        description=BACKEND_JOB_TYPES[7]["description"],
     )
     return registry
