@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ams-gateway"
-version = "1.0.0-rc.1"
+version = "1.0.0-rc.2"
 description = "AMS Gateway MVP：本地任务/服务/产物网关（FastAPI + SQLite + SSE）"
 readme = "README.md"
 requires-python = ">=3.12"
