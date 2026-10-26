@@ -69,64 +69,79 @@ BACKEND_JOB_TYPES = (
 )
 
 
+def _description(job_type: str) -> str:
+    """按 type 取描述，避免用数组下标（下标漂移曾导致描述与类型错位）。"""
+    for item in BACKEND_JOB_TYPES:
+        if item["type"] == job_type:
+            return item["description"]
+    raise KeyError(job_type)
+
+
 def register_backend_runners(
     registry: RunnerRegistry,
     *,
     rvc_script: str | Path | None = None,
     pymss_script: str | Path | None = None,
 ) -> RunnerRegistry:
-    """把三个真实后端注册进 registry（可覆盖脚本路径用于测试/实验）。"""
+    """把所有真实后端注册进 registry（可覆盖脚本路径用于测试/实验）。"""
     registry.register(
         "convert.msvc",
         lambda: MsvcConvertRunner(),
         gpu=False,
-        description=BACKEND_JOB_TYPES[0]["description"],
+        description=_description("convert.msvc"),
     )
     registry.register(
         "convert.rvc",
         lambda: RvcConvertRunner(script_path=rvc_script),
         gpu=True,
-        description=BACKEND_JOB_TYPES[1]["description"],
+        description=_description("convert.rvc"),
     )
     registry.register(
         "separate.pymss",
         lambda: PymssSeparateRunner(script_path=pymss_script),
         gpu=True,
-        description=BACKEND_JOB_TYPES[2]["description"],
-    )
-    registry.register(
-        "train.tts",
-        lambda: TtsTrainRunner(),
-        gpu=True,
-        description="TTS 音源炼制（Piper/VITS）",
-    )
-    registry.register(
-        "tts.dataset.prepare",
-        lambda: TtsDatasetPrepareRunner(),
-        gpu=False,
-        description="TTS 数据集导入/校验",
-    )
-    registry.register(
-        "tts.synthesize",
-        lambda: TtsSynthesizeRunner(),
-        gpu=False,
-        description=BACKEND_JOB_TYPES[4]["description"],
+        description=_description("separate.pymss"),
     )
     registry.register(
         "train.rvc",
         lambda: RvcTrainRunner(),
         gpu=True,
-        description=BACKEND_JOB_TYPES[3]["description"],
+        description=_description("train.rvc"),
+    )
+    registry.register(
+        "train.tts",
+        lambda: TtsTrainRunner(),
+        gpu=True,
+        description=_description("train.tts"),
+    )
+    registry.register(
+        "tts.dataset.prepare",
+        lambda: TtsDatasetPrepareRunner(),
+        gpu=False,
+        description=_description("tts.dataset.prepare"),
+    )
+    registry.register(
+        "tts.synthesize",
+        lambda: TtsSynthesizeRunner(),
+        gpu=False,
+        description=_description("tts.synthesize"),
     )
     registry.register(
         "dataset.prepare",
         lambda: DatasetPrepareRunner(),
         gpu=False,
-        description=BACKEND_JOB_TYPES[5]["description"],
+        description=_description("dataset.prepare"),
     )
     registry.register(
         "evaluate.audio",
         lambda: EvaluateAudioRunner(),
         gpu=False,
-        description=BACKEND_JOB_TYPES[6]["description"],
+        description=_description("evaluate.audio"),
     )
+    registry.register(
+        "mix.master",
+        lambda: MixMasterRunner(),
+        gpu=False,
+        description=_description("mix.master"),
+    )
+    return registry
