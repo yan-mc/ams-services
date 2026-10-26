@@ -58,7 +58,7 @@ class Settings:
     rvc_python: str | None = None
     event_ring: int = 500
     shutdown_grace_seconds: float = 2.0
-    version: str = "1.0.0-rc.2"
+    version: str = "1.0.0"
 
     # ---- 派生路径（00 第 4 节目录约定） ----
     @property
