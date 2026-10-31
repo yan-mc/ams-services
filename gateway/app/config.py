@@ -58,7 +58,7 @@ class Settings:
     rvc_python: str | None = None
     event_ring: int = 500
     shutdown_grace_seconds: float = 2.0
-    version: str = "1.0.0"
+    version: str = "2.0.0"
 
     # ---- 派生路径（00 第 4 节目录约定） ----
     @property
@@ -81,9 +81,14 @@ class Settings:
     def artifacts_dir(self) -> Path:
         return self.ams_home / "artifacts"
 
+    # ---- GPT-SoVITS（新 TTS 管线） ----
     @property
-    def tts_voices_dir(self) -> Path:
-        return self.ams_home / "tts_voices"
+    def tts_gsv_home(self) -> Path:
+        return self.ams_home / "tts-gsv"
+
+    @property
+    def tts_gsv_voices_dir(self) -> Path:
+        return self.tts_gsv_home / "voices"
 
     @property
     def projects_dir(self) -> Path:
@@ -116,7 +121,10 @@ class Settings:
             self.runtime_dir,
             self.logs_dir,
             self.voices_dir,
-            self.tts_voices_dir,
+            self.tts_gsv_home,
+            self.tts_gsv_voices_dir,
+            self.tts_gsv_home / "logs",
+            self.tts_gsv_home / "tmp",
             self.artifacts_dir,
             self.projects_dir,
             self.imports_dir,

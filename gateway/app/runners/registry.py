@@ -8,10 +8,10 @@ from ..jobs.runner import RunnerRegistry
 from .msvc import MsvcConvertRunner
 from .pymss import PymssSeparateRunner
 from .rvc import RvcConvertRunner
-from .tts import TtsSynthesizeRunner
+from .tts_gsv import TtsGsvSynthesizeRunner
+from .tts_train_gsv import TtsTrainGsvRunner
+from .tts_dataset_gsv import TtsDatasetGsvRunner
 from .train import RvcTrainRunner
-from .tts_train import TtsTrainRunner
-from .tts_dataset import TtsDatasetPrepareRunner
 from .dataset import DatasetPrepareRunner
 from .mix_evaluate import EvaluateAudioRunner, MixMasterRunner
 
@@ -37,19 +37,19 @@ BACKEND_JOB_TYPES = (
         "description": "RVC 音源炼制（数据集 → pth + index → 注册音色）",
     },
     {
-        "type": "train.tts",
+        "type": "tts.synthesize.gsv",
         "gpu": True,
-        "description": "TTS 音源炼制（数据集 → onnx + onnx.json → 注册）",
+        "description": "GPT-SoVITS 语音合成（V5turbo / V2ProPlus，runtime.tts-gsv-core）",
     },
     {
-        "type": "tts.dataset.prepare",
-        "gpu": False,
-        "description": "TTS 数据集导入/校验（metadata.csv + wav）",
+        "type": "tts.train.gsv",
+        "gpu": True,
+        "description": "GPT-SoVITS V5turbo 音源炼制（LoRA + GPT -> voice.json）",
     },
     {
-        "type": "tts.synthesize",
+        "type": "tts.dataset.prepare.gsv",
         "gpu": False,
-        "description": "Piper 离线语音合成（runtime.tts）",
+        "description": "GPT-SoVITS 数据集导入/校验（wav + metadata）",
     },
     {
         "type": "dataset.prepare",
@@ -109,22 +109,22 @@ def register_backend_runners(
         description=_description("train.rvc"),
     )
     registry.register(
-        "train.tts",
-        lambda: TtsTrainRunner(),
+        "tts.synthesize.gsv",
+        lambda: TtsGsvSynthesizeRunner(),
         gpu=True,
-        description=_description("train.tts"),
+        description=_description("tts.synthesize.gsv"),
     )
     registry.register(
-        "tts.dataset.prepare",
-        lambda: TtsDatasetPrepareRunner(),
-        gpu=False,
-        description=_description("tts.dataset.prepare"),
+        "tts.train.gsv",
+        lambda: TtsTrainGsvRunner(),
+        gpu=True,
+        description=_description("tts.train.gsv"),
     )
     registry.register(
-        "tts.synthesize",
-        lambda: TtsSynthesizeRunner(),
+        "tts.dataset.prepare.gsv",
+        lambda: TtsDatasetGsvRunner(),
         gpu=False,
-        description=_description("tts.synthesize"),
+        description=_description("tts.dataset.prepare.gsv"),
     )
     registry.register(
         "dataset.prepare",

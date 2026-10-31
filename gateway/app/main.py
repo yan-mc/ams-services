@@ -31,7 +31,7 @@ from . import __version__
 from .api import health as health_api
 from .api import jobs as jobs_api
 from .api import projects as projects_api
-from .api import tts as tts_api
+from .api import tts_gsv as tts_gsv_api
 from .api import voices as voices_api
 from .config import Settings
 from .db import Database
@@ -161,7 +161,7 @@ def create_app(
     app.include_router(jobs_api.router, prefix=API_PREFIX)
     app.include_router(voices_api.router, prefix=API_PREFIX)
     app.include_router(projects_api.router, prefix=API_PREFIX)
-    app.include_router(tts_api.router, prefix=API_PREFIX)
+    app.include_router(tts_gsv_api.router, prefix=API_PREFIX)
     return app
 
 
