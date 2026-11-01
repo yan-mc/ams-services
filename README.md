@@ -49,4 +49,4 @@ python -m venv .venv
 
 - 所有音乐数据默认留在安装目录 `data/`；Gateway 只监听 `127.0.0.1`。
 - 本项目为本地优先工具，不提供云端上传；使用第三方模型/音频时请遵守各自许可。
-- License: 项目自有代码按仓库声明；FastAPI/PyTorch/RVC/GPT-SoVITS 等遵循各自许可证。
+- License: MIT (see `LICENSE`).
